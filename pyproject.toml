@@ -1,0 +1,28 @@
+[project]
+name = "android-panzer"
+version = "1.1.0"
+description = "All-in-One Terminal-Tool für Android-Diagnose, -Forensik, -Security & -Rooting über ADB"
+requires-python = ">=3.8"
+# Kernfunktionen brauchen NICHTS außer Python 3.8+ und adb (siehe requirements-optional.txt).
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 120
+target-version = "py38"
+
+[tool.ruff.lint]
+# Pragmatisch: Bug-relevante Regeln an, Stil locker (CLI-Tool mit dichten Zeilen).
+select = ["E", "F", "W", "I", "B"]
+ignore = [
+    "E501",   # Zeilenlänge (UI-Strings sind absichtlich lang)
+    "E701",   # mehrere Statements pro Zeile (kompakte Menü-Handler)
+    "E741",   # mehrdeutige Variablennamen (l, o … in Schleifen)
+    "B008",   # Funktionsaufruf im Default-Argument
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011", "F841"]

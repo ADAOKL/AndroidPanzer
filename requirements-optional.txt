@@ -1,0 +1,14 @@
+# Android Panzer – Kernfunktionen brauchen NICHTS außer Python 3.8+ und adb.
+# Die Tiefen-Engine (Menüpunkt T) nutzt optional folgende Tools:
+
+frida-tools        # Frida-Runtime-Hooks (Keys, Passwörter, SSL-Unpin) + Traffic-Unpin
+mitmproxy          # Traffic-Interception (HTTPS-Klartext)
+cryptography       # WhatsApp .crypt14/15-Backup-Entschlüsselung
+
+# Installation:
+#   pip install frida-tools mitmproxy cryptography
+#
+# Zusätzlich hilfreich (Systempakete):
+#   sqlite3   – SQLite-Recovery & Messenger-DB-Auswertung (meist vorhanden)
+#   sqlcipher – Signal-DB-Entschlüsselung (optional)
+#   fastboot  – Bootloader-/Flash-Funktionen (Rooting-Assistent)

@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+.ruff_cache/
+
+# IDE & Editor
+.claude/
+
+# Tool-Ausgaben (Gerätedaten, Berichte, Logs)
+logs/
+forensik/
+forensik_full/
+forensic_scan.txt
+reports/
+apkscan/
+app_export/
+bootloop/
+cases/
+customfw/
+diagnostics/
+lineageos/
+mediatek/
+osint/
+phone_osint/
+pulled_internal/
+rescue/
+rootprep/
+samsung/
+timeline/
+traffic/
+tools-venv/
+
+# Node
+tools-node/node_modules/
+
+# Laufzeit
+*.log
+*.tmp

@@ -2,7 +2,10 @@
 __pycache__/
 *.py[cod]
 *.pyo
+*.pyc
 .pytest_cache/
+.coverage
+htmlcov/
 *.egg-info/
 dist/
 build/
@@ -10,6 +13,19 @@ build/
 
 # IDE & Editor
 .claude/
+.vscode/
+.idea/
+*.swp
+*~
+
+# Security & Credentials
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+secrets/
+credentials/
 
 # Tool-Ausgaben (Gerätedaten, Berichte, Logs)
 logs/

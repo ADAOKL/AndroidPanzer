@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security Issue
+    url: https://github.com/ADAOKL/android-panzer/security/advisories/new
+    about: Report a security vulnerability privately
+  - name: Discussion
+    url: https://github.com/ADAOKL/android-panzer/discussions
+    about: Ask questions, share ideas, or discuss features

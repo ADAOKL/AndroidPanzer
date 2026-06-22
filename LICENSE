@@ -22,4 +22,32 @@ SOFTWARE.
 
 ---
 
-DISCLAIMER: This tool is designed for forensic analysis, diagnosis, and authorized security testing of Android devices. Use only on devices you own or have explicit permission to analyze. Unauthorized access to devices is illegal in most jurisdictions.
+## Security Disclaimer
+
+THIS SOFTWARE IS PROVIDED FOR EDUCATIONAL AND RESEARCH PURPOSES ONLY.
+
+Users must ensure compliance with applicable laws regarding their use of
+this tool, especially concerning network penetration testing, security auditing,
+forensic analysis, and vulnerability assessment activities.
+
+**Legal Responsibility:**
+- Only use this tool on devices you own or have **explicit written authorization** to analyze.
+- Unauthorized access to computer systems, devices, or networks is illegal in most jurisdictions.
+- The user is solely responsible for ensuring legal compliance.
+- The authors and contributors assume no liability for misuse or damage.
+
+**Jurisdictional Compliance:**
+- Laws regarding digital forensics, device analysis, and penetration testing vary by country/region.
+- Some jurisdictions require specific certifications or licensing.
+- Users are responsible for understanding and adhering to local laws.
+
+**Device Ownership & Authorization:**
+- Analyze only your own devices or devices with explicit owner consent.
+- Do not use this tool for:
+  - Unauthorized surveillance
+  - Access to data belonging to others without consent
+  - Bypassing security measures on devices you don't own
+  - Any activity that violates local or international law
+
+**No Warranty:**
+The authors provide this software "as-is" without warranty of any kind. Use at your own risk.

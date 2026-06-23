@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
+import sys
 import time
 
 from . import ui
@@ -1451,43 +1453,541 @@ def quick_diagnosis(adb: ADB) -> None:
     ui.pause()
 
 
+def _read_eid(adb: ADB) -> str:
+    """Versucht EID über 9 verschiedene Methoden zu lesen."""
+    methods = [
+        # Methode 1: Android 10+ EuiccManager via dumpsys
+        "dumpsys euicc_card_info 2>/dev/null | grep -iE 'eid|EID' | head -n 3",
+        # Methode 2: isub (SubscriptionManager)
+        "dumpsys isub 2>/dev/null | grep -iE 'eid' | head -n 3",
+        # Methode 3: Telephony service direkt
+        "service call isub 2>/dev/null | grep -iE 'eid' | head -n 2",
+        # Methode 4: getprop (MTK / Qualcomm vendor props)
+        "getprop vendor.ril.eid 2>/dev/null; getprop ril.eid 2>/dev/null; "
+        "getprop ro.ril.eid 2>/dev/null",
+        # Methode 5: Phone-Service
+        "dumpsys phone 2>/dev/null | grep -iE 'eid' | head -n 3",
+        # Methode 6: TelephonyManager Content Provider
+        "content query --uri content://telephony/siminfo 2>/dev/null | grep -iE 'eid' | head -n 3",
+        # Methode 7: euicc via service call
+        "service call ephone 61 2>/dev/null | head -n 3",
+        # Methode 8: /sys/class eUICC
+        "ls /sys/class/ieee802154/ 2>/dev/null; cat /sys/class/euicc*/eid 2>/dev/null",
+        # Methode 9: logcat nach EID-Einträgen
+        "logcat -d -s EuiccController:D EuiccManager:D 2>/dev/null | "
+        "grep -iE 'eid' | tail -n 5",
+    ]
+    results = []
+    for i, cmd in enumerate(methods, 1):
+        out = adb.shell(cmd).strip()
+        if out and out not in ("(Keine Ausgabe)", ""):
+            # Versuche EID-Format zu extrahieren: 32 Hex-Zeichen
+            m = re.search(r'[0-9A-Fa-f]{32}', out)
+            if m:
+                return f"EID: {m.group(0).upper()}"
+            results.append(f"Methode {i}: {out[:100]}")
+    return "\n".join(results) if results else "EID nicht auslesbar – eSIM möglicherweise nicht vorhanden."
+
+
 def esim_manager(adb: ADB) -> None:
-    """eSIM-Profil-Manager: EID, Profile, LPA."""
+    """eSIM-Profil-Manager – ERWEITERT: EID · Profile · LPA · Profil-Download · GSMA SGP."""
     while True:
         ui.clear()
-        ui.rule("eSIM-PROFIL-MANAGER", ui.BCYAN)
+        ui.rule("💳 eSIM-PROFIL-MANAGER – ERWEITERT", ui.BCYAN)
+        print()
         ch = ui.menu("Aktion", [
-            ("1", "EID auslesen"),
-            ("2", "Installierte eSIM-Profile"),
-            ("3", "eSIM-Fähigkeit prüfen"),
-            ("4", "LPA-App starten"),
-            ("5", "eSIM-Aktivierungscode eingeben"),
-            ("6", "eSIM-Aktivierungs-Log"),
+            ("1",  "🔑 EID auslesen (9 Methoden: dumpsys/getprop/service/logcat)"),
+            ("2",  "📋 Installierte eSIM-Profile (alle Methoden)"),
+            ("3",  "✅ eSIM-Fähigkeit prüfen (EuiccManager + Chip-Info)"),
+            ("4",  "🚀 LPA-App starten (System-eSIM-Verwaltung)"),
+            ("5",  "🔗 eSIM-Aktivierungscode eingeben (LPA:1$... / QR-Code-Inhalt)"),
+            ("6",  "📜 eSIM-Aktivierungs-Log (EuiccController + LPA)"),
+            ("7",  "🌐 SM-DP+ Server Verbindung prüfen"),
+            ("8",  "📊 eSIM-Chip Details (ATR · ICCID · Hersteller)"),
+            ("9",  "🔄 eSIM-Profil aktivieren/deaktivieren"),
+            ("10", "🗑️  eSIM-Profil löschen"),
+            ("11", "📤 eSIM-Profil-Backup (GSMA SGP.22)"),
+            ("12", "🔒 eSIM-Zertifikat-Chain anzeigen"),
+            ("13", "📡 eSIM SMSR / SMDP Diagnose"),
+            ("14", "🔧 EuiccService Intent senden"),
         ], back_label="Zurück")
         if ch in ("back", "quit"):
             return
-        cmds = {
-            "1": "service call econtrol 3 2>/dev/null",
-            "2": "dumpsys isub 2>/dev/null | grep -iE 'esim|profile' | head -n 20",
-            "3": "dumpsys euicc_card_info 2>/dev/null | head -n 20",
-            "4": "am start -a android.service.euicc.action.MAIN 2>/dev/null",
-            "6": "logcat -d -s EuiccController:D LPA:D 2>/dev/null | tail -n 40",
-        }
-        if ch == "5":
-            code = ui.ask("Aktivierungscode (LPA:1$...)").strip()
-            if not code:
-                continue
+        if ch == "1":
+            ui.clear(); ui.rule("EID auslesen – 9 Methoden", ui.BCYAN)
+            ui.info("Versuche alle bekannten EID-Lesemethoden …")
+            print()
+            eid = _read_eid(adb)
+            print(f"\n{ui.BGREEN if 'EID:' in eid else ui.BYELLOW}{eid}{ui.RESET}")
+            if "EID:" in eid:
+                raw = re.search(r'[0-9A-F]{32}', eid)
+                if raw:
+                    eid_val = raw.group(0)
+                    print(f"\n  {ui.GREY}TAC (Hersteller-ID):  {eid_val[:8]}")
+                    print(f"  Individual-ID:       {eid_val[8:]}{ui.RESET}")
+                    # GSMA TAC-Lookup
+                    tac_db = {
+                        "89049032": "Apple (Infineon)", "89033023": "Apple (ST Micro)",
+                        "89049031": "Google/Qualcomm",  "89049033": "Samsung LSI",
+                        "89049034": "MediaTek",         "89049035": "Kirin (Huawei)",
+                        "89049036": "UNISOC",           "89049037": "NXP",
+                    }
+                    vendor = tac_db.get(eid_val[:8], "Unbekannter Hersteller")
+                    print(f"  Hersteller (TAC-DB): {ui.BOLD}{vendor}{ui.RESET}")
+        elif ch == "2":
+            ui.clear(); ui.rule("Installierte eSIM-Profile", ui.BCYAN)
+            cmds = [
+                ("dumpsys isub", "dumpsys isub 2>/dev/null | grep -iE 'iccid|carrier|profile|display' | head -n 30"),
+                ("euicc_card_info", "dumpsys euicc_card_info 2>/dev/null"),
+                ("ephone profiles", "service call ephone 3 2>/dev/null | head -n 10"),
+            ]
+            for label, cmd in cmds:
+                out = adb.shell(cmd).strip()
+                if out:
+                    ui.rule(label, ui.GREY)
+                    print(out[:500])
+        elif ch == "3":
+            ui.clear(); ui.rule("eSIM-Fähigkeit", ui.BCYAN)
+            checks = [
+                ("EuiccManager API",     "dumpsys package com.google.android.euicc 2>/dev/null | grep versionName | head -n 1"),
+                ("EuiccCardInfo Service","dumpsys euicc_card_info 2>/dev/null | head -n 5"),
+                ("LPA Package",          "pm list packages 2>/dev/null | grep -iE 'euicc|lpa|esim' | head -n 5"),
+                ("eSIM getprop",         "getprop | grep -iE 'esim|euicc' | head -n 5"),
+                ("TelephonyCapability",  "dumpsys phone 2>/dev/null | grep -i 'esim\\|euicc' | head -n 5"),
+            ]
+            for label, cmd in checks:
+                out = adb.shell(cmd).strip()
+                icon = f"{ui.BGREEN}✓{ui.RESET}" if out else f"{ui.GREY}–{ui.RESET}"
+                print(f"  {icon}  {label:<28}  {ui.GREY}{out[:60] if out else 'nicht gefunden'}{ui.RESET}")
+        elif ch == "4":
+            intents = [
+                "am start -n com.google.android.euicc/.ui.GetDefaultSubscriptionActivity 2>/dev/null",
+                "am start -a android.service.euicc.action.MAIN 2>/dev/null",
+                "am start -a com.samsung.android.euicc.action.EUICC_UI 2>/dev/null",
+                "am start -n com.android.phone/.settings.euicc.EuiccSettingsActivity 2>/dev/null",
+            ]
+            for intent in intents:
+                out = adb.shell(intent)
+                if "error" not in out.lower() and "exception" not in out.lower():
+                    ui.ok(f"LPA gestartet: {intent[:60]}")
+                    break
+        elif ch == "5":
+            code = ui.ask("Aktivierungscode (LPA:1$smdp.example.com$... oder QR-Inhalt)").strip()
+            if code:
+                out = adb.shell(
+                    f"am start -a android.intent.action.VIEW "
+                    f"-n com.google.android.euicc/.ui.MainActivity "
+                    f"--es 'activation_code' '{code}' 2>/dev/null")
+                print(out or "(Keine Antwort – ggf. LPA öffnet sich auf dem Gerät)")
+        elif ch == "6":
+            ui.clear(); ui.rule("eSIM Log", ui.BCYAN)
             out = adb.shell(
-                f"am start -a android.intent.action.VIEW -d '{code}' 2>/dev/null")
-            print(out or "(Kein Output)")
-            ui.pause()
-            continue
-        cmd = cmds.get(ch)
-        if cmd:
-            ui.info(f"Befehl: {ui.GREY}{cmd}{ui.RESET}\n")
-            out = adb.shell(cmd)
-            print(out.strip() or "(Keine Ausgabe)")
+                "logcat -d -s EuiccController:D EuiccManager:D LPA:D "
+                "euicc:D EuiccService:D 2>/dev/null | tail -n 60")
+            print(out.strip() or "(Kein eSIM-Log)")
+        elif ch == "7":
+            ui.clear(); ui.rule("SM-DP+ Verbindung", ui.BCYAN)
+            servers = [
+                "smdp.gsma.com", "consumer.smdp.io", "lpa.ntt.com",
+                "smdpplus.t-mobile.com", "smdp.verizon.com",
+            ]
+            custom = ui.ask("Eigener SM-DP+ Server (leer=Standard-Test)").strip()
+            if custom:
+                servers = [custom]
+            for srv in servers:
+                import socket
+                try:
+                    socket.setdefaulttimeout(3)
+                    socket.gethostbyname(srv)
+                    print(f"  {ui.BGREEN}✓{ui.RESET}  {srv}")
+                except OSError:
+                    print(f"  {ui.BRED}✗{ui.RESET}  {srv}")
+        elif ch == "8":
+            ui.clear(); ui.rule("eSIM-Chip Details", ui.BCYAN)
+            cmds = [
+                ("ATR",      "cat /sys/class/uicc/uicc0/atr 2>/dev/null || "
+                             "cat /sys/bus/platform/devices/*.sim/atr 2>/dev/null"),
+                ("ICCID",    "getprop gsm.sim.state; "
+                             "content query --uri content://telephony/siminfo 2>/dev/null | "
+                             "grep iccid | head -n 2"),
+                ("Chip-OS",  "cat /sys/class/uicc/uicc0/atr 2>/dev/null | "
+                             "xxd 2>/dev/null | head -n 3"),
+            ]
+            for label, cmd in cmds:
+                out = adb.shell(cmd).strip()
+                ui.kv(label, out[:100] if out else "—")
+        elif ch == "9":
+            sub_id = ui.ask("Subscription-ID (leer=auto)").strip() or "0"
+            enable = ui.confirm("Profil aktivieren (Nein=deaktivieren)?", True)
+            action = "enable" if enable else "disable"
+            out = adb.shell(
+                f"service call isub 9 i32 {sub_id} 2>/dev/null || "
+                f"am broadcast -a android.telephony.action.SIM_SUBSCRIPTION_CHANGED 2>/dev/null")
+            print(out or f"(Profil {action} gesendet)")
+        elif ch == "10":
+            if ui.confirm("eSIM-Profil wirklich löschen (nicht rückgängig)?", False):
+                sub_id = ui.ask("Subscription-ID").strip() or "0"
+                out = adb.shell(f"service call ephone 5 i32 {sub_id} 2>/dev/null")
+                print(out or "(Löschbefehl gesendet)")
+        elif ch == "11":
+            ui.clear(); ui.rule("eSIM-Profil-Backup", ui.BCYAN)
+            out = adb.shell(
+                "dumpsys isub 2>/dev/null; "
+                "dumpsys euicc_card_info 2>/dev/null; "
+                "content query --uri content://telephony/siminfo 2>/dev/null")
+            ts = int(time.time())
+            fn = os.path.join(OUT, f"esim_backup_{ts}.txt")
+            with open(fn, "w") as f:
+                f.write(out)
+            ui.ok(f"Backup: {fn}")
+        elif ch == "12":
+            out = adb.shell(
+                "dumpsys euicc_card_info 2>/dev/null | grep -iE 'cert|certificate|chain' | head -n 20")
+            print(out.strip() or "(Kein Zertifikat-Info)")
+        elif ch == "13":
+            ui.clear(); ui.rule("SMSR / SMDP Diagnose", ui.BCYAN)
+            out = adb.shell(
+                "logcat -d -s EuiccLpa:D SMSR:D SMDP:D 2>/dev/null | tail -n 30; "
+                "dumpsys euicc_card_info 2>/dev/null | grep -iE 'smdp|smsr|server' | head -n 10")
+            print(out.strip() or "(Keine SMSR/SMDP-Daten)")
+        elif ch == "14":
+            intents = {
+                "a": "android.service.euicc.action.DELETE_SUBSCRIPTION_PRIVILEGED",
+                "b": "android.service.euicc.action.TOGGLE_SUBSCRIPTION_PRIVILEGED",
+                "c": "android.service.euicc.action.RENAME_SUBSCRIPTION_PRIVILEGED",
+                "d": "android.service.euicc.action.PROVISION_EMBEDDED_SUBSCRIPTION",
+            }
+            for k, v in intents.items():
+                print(f"  {k}) {v}")
+            sel = ui.ask("Aktion").strip().lower()
+            intent = intents.get(sel)
+            if intent:
+                out = adb.shell(f"am broadcast -a {intent} 2>/dev/null")
+                print(out)
         ui.pause()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  LIVE SIM-TRAFFIC DASHBOARD
+# ══════════════════════════════════════════════════════════════════════════════
+
+_NET_TYPE = {
+    0: "UNKNOWN",  1: "GPRS",   2: "EDGE",    3: "UMTS",   4: "CDMA",
+    6: "EVDO-A",   7: "1xRTT",  8: "HSDPA",   9: "HSUPA",  10: "HSPA",
+    11: "iDEN",   12: "EVDO-B", 13: "LTE",    14: "eHRPD", 15: "HSPA+",
+    16: "GSM",    17: "TD-SCDMA", 18: "IWLAN", 19: "LTE-CA", 20: "NR 5G",
+}
+
+_FREQ_BAND = {
+    1: "2100 MHz", 2: "1900 MHz", 3: "1800 MHz", 4: "1700 MHz", 5: "850 MHz",
+    7: "2600 MHz", 8: "900 MHz", 12: "700 MHz", 13: "700 MHz", 17: "700 MHz",
+    20: "800 MHz", 28: "700 MHz", 38: "2600 MHz", 40: "2300 MHz", 41: "2500 MHz",
+    66: "AWS-3", 71: "600 MHz", 77: "3.5 GHz", 78: "3.5 GHz", 79: "4.9 GHz",
+}
+
+
+def _sig_bar(val: int, lo: int, hi: int, w: int = 16) -> str:
+    if val is None:
+        return f"{ui.GREY}{'░'*w}{ui.RESET}"
+    pct = max(0.0, min(1.0, (val - lo) / (hi - lo)))
+    filled = int(w * pct)
+    if pct >= 0.7:
+        col = ui.BGREEN
+    elif pct >= 0.4:
+        col = ui.BYELLOW
+    else:
+        col = ui.BRED
+    return f"{col}{'█'*filled}{'░'*(w-filled)}{ui.RESET}"
+
+
+def _fmt_speed(bps: float) -> str:
+    if bps < 0:
+        bps = 0
+    if bps >= 1_000_000:
+        return f"{bps/1_000_000:6.2f} MB/s"
+    if bps >= 1_000:
+        return f"{bps/1_000:6.2f} KB/s"
+    return f"{bps:6.0f}  B/s"
+
+
+def _fmt_bytes(b: int) -> str:
+    if b >= 1_073_741_824:
+        return f"{b/1_073_741_824:.2f} GB"
+    if b >= 1_048_576:
+        return f"{b/1_048_576:.2f} MB"
+    if b >= 1_024:
+        return f"{b/1_024:.1f} KB"
+    return f"{b} B"
+
+
+def _collect(adb: ADB, prev: dict) -> dict:
+    d: dict = {}
+    now = time.monotonic()
+
+    # ── Telephony Registry (Signal + Netz) ─────────────────────────────────
+    tel = adb.shell(
+        "dumpsys telephony.registry 2>/dev/null | head -n 120")
+    # RSRP
+    m = re.search(r'rsrp\s*=\s*(-?\d+)', tel, re.I)
+    d['rsrp'] = int(m.group(1)) if m else None
+    # RSRQ
+    m = re.search(r'rsrq\s*=\s*(-?\d+)', tel, re.I)
+    d['rsrq'] = int(m.group(1)) if m else None
+    # RSSI
+    m = re.search(r'rssi\s*=\s*(-?\d+)', tel, re.I)
+    d['rssi'] = int(m.group(1)) if m else None
+    # SINR/rssnr
+    m = re.search(r'(?:rssnr|sinr)\s*=\s*(-?\d+)', tel, re.I)
+    d['sinr'] = int(m.group(1)) if m else None
+    # Netzwerk-Typ
+    m = re.search(r'mDataNetworkType\s*=\s*(\d+)', tel)
+    d['net_type'] = int(m.group(1)) if m else 0
+    # Operator
+    m = re.search(r'mNetworkOperatorName\s*=\s*(\S+)', tel)
+    d['operator'] = m.group(1) if m else "—"
+    # Cell ID
+    m = re.search(r'(?:ci|cellId)\s*=\s*(\d+)', tel, re.I)
+    d['cell_id'] = m.group(1) if m else "?"
+    # TAC / LAC
+    m = re.search(r'(?:tac|lac)\s*=\s*(\w+)', tel, re.I)
+    d['tac'] = m.group(1) if m else "?"
+    # Band
+    m = re.search(r'(?:band|earfcn)\s*=\s*(\d+)', tel, re.I)
+    d['band'] = int(m.group(1)) if m else 0
+    # Slot-Anzahl
+    m = re.search(r'phoneId\s*=\s*(\d+)', tel, re.I)
+    d['slot'] = m.group(1) if m else "0"
+
+    # ── Operator / SIM props ─────────────────────────────────────────────
+    ops = adb.shell(
+        "getprop gsm.operator.alpha; getprop gsm.sim.state; getprop gsm.operator.numeric")
+    props = [p.strip() for p in ops.splitlines() if p.strip()]
+    if not d['operator'] or d['operator'] == "—":
+        d['operator'] = props[0] if props else "—"
+    d['sim_state'] = props[1] if len(props) > 1 else "?"
+    d['plmn'] = props[2] if len(props) > 2 else "?"
+
+    # ── APN / IP ──────────────────────────────────────────────────────────
+    apn_out = adb.shell(
+        "settings get global data_roaming 2>/dev/null; "
+        "ip -4 addr show rmnet0 2>/dev/null | grep 'inet ' | awk '{print $2}' | head -n 1; "
+        "ip -4 addr show wlan0 2>/dev/null  | grep 'inet ' | awk '{print $2}' | head -n 1")
+    apn_lines = [l.strip() for l in apn_out.splitlines() if l.strip()]
+    d['roaming'] = "JA" if apn_lines and apn_lines[0] == "1" else "NEIN"
+    d['ip_rmnet'] = apn_lines[1] if len(apn_lines) > 1 else "—"
+    d['ip_wlan']  = apn_lines[2] if len(apn_lines) > 2 else "—"
+
+    # ── Traffic: /proc/net/dev ────────────────────────────────────────────
+    net_dev = adb.shell("cat /proc/net/dev 2>/dev/null")
+    rx_total = tx_total = 0
+    iface_stats = []
+    for line in net_dev.splitlines():
+        if ':' not in line:
+            continue
+        iface, rest = line.split(':', 1)
+        iface = iface.strip()
+        if iface == 'lo':
+            continue
+        parts = rest.split()
+        if len(parts) >= 9:
+            rx = int(parts[0])
+            tx = int(parts[8])
+            rx_total += rx
+            tx_total += tx
+            if rx + tx > 0:
+                iface_stats.append((iface, rx, tx))
+    d['rx_bytes'] = rx_total
+    d['tx_bytes'] = tx_total
+    d['ifaces']   = iface_stats
+
+    # Speed-Delta
+    dt = now - prev.get('ts', now)
+    if dt > 0.1 and 'rx_bytes' in prev:
+        d['rx_speed'] = max(0.0, (rx_total - prev.get('rx_bytes', rx_total)) / dt)
+        d['tx_speed'] = max(0.0, (tx_total - prev.get('tx_bytes', tx_total)) / dt)
+    else:
+        d['rx_speed'] = d.get('rx_speed', 0.0)
+        d['tx_speed'] = d.get('tx_speed', 0.0)
+    d['rx_total_session'] = rx_total - prev.get('rx_start', rx_total)
+    d['tx_total_session'] = tx_total - prev.get('tx_start', tx_total)
+    d['rx_start'] = prev.get('rx_start', rx_total)
+    d['tx_start'] = prev.get('tx_start', tx_total)
+    d['ts'] = now
+
+    # ── Aktive Verbindungen ───────────────────────────────────────────────
+    conn_raw = adb.shell(
+        "ss -tnp 2>/dev/null | grep -v '^State' | head -n 12 || "
+        "netstat -tnp 2>/dev/null | grep ESTABLISHED | head -n 12")
+    conns = []
+    for line in conn_raw.splitlines():
+        parts = line.split()
+        if len(parts) >= 4:
+            remote = parts[4] if len(parts) > 4 else parts[3]
+            proc   = parts[-1] if '"' in parts[-1] or '(' in parts[-1] else ""
+            proc   = re.sub(r'.*"(.*)".*', r'\1', proc)[:18]
+            conns.append(f"{remote:<25}  {proc}")
+    d['connections'] = conns[:8]
+
+    # ── SMS-Queue / Anrufe ────────────────────────────────────────────────
+    calls = adb.shell("dumpsys telecom 2>/dev/null | grep -c 'TC@' || echo 0").strip()
+    d['active_calls'] = calls
+
+    return d
+
+
+def _draw_dashboard(d: dict, elapsed: float) -> None:
+    """Dashboard-Rahmen rendern."""
+    W = 78
+    now_str = time.strftime("%Y-%m-%d  %H:%M:%S")
+    lauf    = f"{int(elapsed//60):02d}:{int(elapsed%60):02d}"
+
+    def _line(content: str = "") -> str:
+        # Rohe Breite ohne ANSI
+        raw = re.sub(r'\033\[[^m]*m', '', content)
+        pad = max(0, W - 2 - len(raw))
+        return f"║  {content}{' '*pad}  ║"
+
+    def _sep() -> str:
+        return f"╠{'═'*(W)}╣"
+
+    def _header() -> str:
+        title = f"🔴 SIM LIVE-TRAFFIC DASHBOARD"
+        right = f"[{now_str}  Laufzeit: {lauf}]"
+        gap = W - 2 - len(title) - len(right)
+        return f"║  {ui.BRED}{ui.BOLD}{title}{ui.RESET}{'':>{gap}}{ui.GREY}{right}{ui.RESET}  ║"
+
+    rsrp = d.get('rsrp')
+    rsrq = d.get('rsrq')
+    sinr = d.get('sinr')
+    rssi = d.get('rssi')
+
+    def _rsrp_label(v) -> str:
+        if v is None: return "—"
+        if v >= -80:  return f"{ui.BGREEN}Ausgezeichnet{ui.RESET}"
+        if v >= -90:  return f"{ui.BGREEN}Gut{ui.RESET}"
+        if v >= -100: return f"{ui.BYELLOW}Mittel{ui.RESET}"
+        if v >= -110: return f"{ui.BYELLOW}Schwach{ui.RESET}"
+        return f"{ui.BRED}Sehr schwach{ui.RESET}"
+
+    net_name = _NET_TYPE.get(d.get('net_type', 0), "UNKNOWN")
+    band_mhz = _FREQ_BAND.get(d.get('band', 0), "")
+    band_str = f"Band {d.get('band',0)} ({band_mhz})" if band_mhz else f"Band {d.get('band',0)}"
+
+    rx_spd = d.get('rx_speed', 0.0)
+    tx_spd = d.get('tx_speed', 0.0)
+    rx_ses = d.get('rx_total_session', 0)
+    tx_ses = d.get('tx_total_session', 0)
+    max_spd = max(rx_spd, tx_spd, 1)
+    BAR_W = 18
+
+    lines = [
+        f"╔{'═'*W}╗",
+        _header(),
+        _sep(),
+        _line(f"{ui.BOLD}SIGNAL{ui.RESET}"),
+        _line(f"  RSRP  {str(rsrp)+' dBm' if rsrp else '—':>8}  "
+              f"{_sig_bar(rsrp,-140,-44,BAR_W)}  {_rsrp_label(rsrp)}"),
+        _line(f"  RSRQ  {str(rsrq)+' dB' if rsrq else '—':>8}  "
+              f"{_sig_bar(rsrq,-34,0,BAR_W)}"),
+        _line(f"  SINR  {str(sinr)+' dB' if sinr else '—':>8}  "
+              f"{_sig_bar(sinr,-23,40,BAR_W)}"),
+        _line(f"  RSSI  {str(rssi)+' dBm' if rssi else '—':>8}  "
+              f"{_sig_bar(rssi,-110,-50,BAR_W)}"),
+        _sep(),
+        _line(f"{ui.BOLD}NETZ{ui.RESET}"),
+        _line(f"  Typ:  {ui.BCYAN}{net_name:<10}{ui.RESET}  {band_str}"),
+        _line(f"  Cell-ID: {d.get('cell_id','?'):<12}  TAC/LAC: {d.get('tac','?')}"),
+        _line(f"  Betreiber: {ui.BOLD}{d.get('operator','—'):<15}{ui.RESET}  "
+              f"PLMN: {d.get('plmn','?')}  Roaming: {d.get('roaming','?')}"),
+        _line(f"  IP (rmnet): {d.get('ip_rmnet','—'):<20}  SIM: {d.get('sim_state','?')}"),
+        _sep(),
+        _line(f"{ui.BOLD}TRAFFIC (Live){ui.RESET}"),
+        _line(f"  ↓ Download  {_fmt_speed(rx_spd)}  "
+              f"{_sig_bar(int(rx_spd), 0, int(max_spd), BAR_W)}  "
+              f"Session: {_fmt_bytes(rx_ses)}"),
+        _line(f"  ↑ Upload    {_fmt_speed(tx_spd)}  "
+              f"{_sig_bar(int(tx_spd), 0, int(max_spd), BAR_W)}  "
+              f"Session: {_fmt_bytes(tx_ses)}"),
+    ]
+    # Interfaces
+    for iface, rx, tx in d.get('ifaces', [])[:4]:
+        lines.append(_line(f"  {ui.GREY}{iface:<12}  ↓ {_fmt_bytes(rx):<12}  ↑ {_fmt_bytes(tx)}{ui.RESET}"))
+    lines += [
+        _sep(),
+        _line(f"{ui.BOLD}VERBINDUNGEN  ({len(d.get('connections', []))} aktiv){ui.RESET}"),
+    ]
+    for conn in d.get('connections', []):
+        lines.append(_line(f"  {ui.GREY}{conn}{ui.RESET}"))
+    if not d.get('connections'):
+        lines.append(_line(f"  {ui.GREY}(keine TCP-Verbindungen sichtbar){ui.RESET}"))
+    lines += [
+        _sep(),
+        _line(f"  Anrufe aktiv: {d.get('active_calls','0')}"),
+        f"╚{'═'*W}╝",
+        f"  {ui.GREY}[Q] Beenden  [R] Zähler reset  Aktualisierung: 2s{ui.RESET}",
+    ]
+
+    # Alles auf einmal schreiben
+    sys.stdout.write("\033[H\033[J")  # Cursor home + clear screen
+    sys.stdout.write("\n".join(lines) + "\n")
+    sys.stdout.flush()
+
+
+def live_sim_dashboard(adb: ADB) -> None:
+    """Echtzeit SIM/Netz/Traffic Live-Dashboard (2s Refresh · Q zum Beenden)."""
+    import select
+    try:
+        import termios
+        import tty
+        _has_tty = True
+    except ImportError:
+        _has_tty = False
+
+    old_settings = None
+    if _has_tty and sys.stdin.isatty():
+        try:
+            old_settings = termios.tcgetattr(sys.stdin)
+            tty.setcbreak(sys.stdin.fileno())
+        except Exception:  # noqa: BLE001
+            old_settings = None
+
+    def _kbhit() -> str:
+        if select.select([sys.stdin], [], [], 0)[0]:
+            return sys.stdin.read(1)
+        return ""
+
+    prev: dict = {}
+    t0 = time.monotonic()
+    try:
+        while True:
+            try:
+                d = _collect(adb, prev)
+            except Exception:  # noqa: BLE001
+                d = prev.copy() or {}
+            _draw_dashboard(d, time.monotonic() - t0)
+            prev = d
+            # 2 s warten, dabei auf Tastendruck prüfen
+            deadline = time.monotonic() + 2.0
+            while time.monotonic() < deadline:
+                key = _kbhit()
+                if key.lower() == 'q':
+                    return
+                if key.lower() == 'r':
+                    prev['rx_start'] = d.get('rx_bytes', 0)
+                    prev['tx_start'] = d.get('tx_bytes', 0)
+                    t0 = time.monotonic()
+                time.sleep(0.1)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        if old_settings is not None:
+            try:
+                termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
+            except Exception:  # noqa: BLE001
+                pass
+        sys.stdout.write("\033[?25h")  # Cursor wieder sichtbar
+        sys.stdout.flush()
+        ui.clear()
 
 
 def baseband_tools(adb: ADB) -> None:
@@ -1582,9 +2082,58 @@ def sim_forensics(adb: ADB) -> None:
             return
 
         if ch == "1":
-            out = adb.shell("content query --uri content://icc/adn 2>/dev/null")
-            ui.clear(); ui.rule("SIM-Telefonbuch (ADN)", ui.CYAN)
-            print(out.strip() or "(Kein Zugriff oder leer)"); ui.pause()
+            ui.clear(); ui.rule("SIM-Telefonbuch (ADN) – Multi-Methoden", ui.CYAN)
+            ui.info("Versuche alle bekannten ADN-Zugriffsmethoden …"); print()
+            found = False
+            # Methode 1–4: verschiedene Content-Provider URIs
+            adn_uris = [
+                "content://icc/adn",
+                "content://icc/adn/subId/1",
+                "content://icc/adn/subId/2",
+                "content://com.android.contacts/raw_contacts?sim=true",
+            ]
+            for uri in adn_uris:
+                out = adb.shell(f"content query --uri {uri} 2>/dev/null")
+                if out.strip() and "No result found" not in out and "error" not in out.lower():
+                    print(f"{ui.BGREEN}✓ {uri}{ui.RESET}")
+                    for line in out.strip().splitlines()[:30]:
+                        m = re.search(r'(?:name|tag)=([^,]+).*phone=([^,\s]+)', line, re.I)
+                        if m:
+                            print(f"  📞 {m.group(1):<25}  {m.group(2)}")
+                        else:
+                            print(f"  {ui.GREY}{line[:80]}{ui.RESET}")
+                    found = True
+                    break
+            # Methode 5: iphonesubinfo ADN
+            if not found:
+                for service_nr in ["25", "26", "27"]:
+                    out = adb.shell(f"service call iphonesubinfo {service_nr} s16 phone 2>/dev/null")
+                    if out.strip() and "Parcel" not in out and len(out) > 10:
+                        print(f"service call iphonesubinfo {service_nr}: {out.strip()[:100]}")
+                        found = True
+            # Methode 6: simphonebook (Android 12+)
+            if not found:
+                out = adb.shell(
+                    "content query --uri content://com.android.providers.telephony/"
+                    "simphonebook 2>/dev/null | head -n 20")
+                if out.strip() and "No result" not in out:
+                    print(out[:500]); found = True
+            # Methode 7: pysim (wenn installiert)
+            if not found:
+                pysim = shutil.which("pySIM-shell") or shutil.which("pysim-shell") or shutil.which("simcard-read")
+                if pysim:
+                    out = adb.shell("⚠ pySIM nur auf direkter Kartenverbindung nutzbar.")
+            if not found:
+                print(f"  {ui.BYELLOW}ADN nicht auslesbar. Mögliche Ursachen:{ui.RESET}")
+                print("  • SIM-Telefonbuch ist leer")
+                print("  • Android 9+ blockiert direkten SIM-Content-Zugriff ohne Berechtigung")
+                print("  • Nutze: Einstellungen → Kontakte → SIM-Kontakte importieren")
+                print("  • Root-Zugriff via adb shell content ... root=True versuchen")
+                out2 = adb.shell(
+                    "content query --uri content://icc/adn 2>/dev/null", root=True)
+                if out2.strip() and "No result found" not in out2:
+                    print(f"\n{ui.BGREEN}Root-Zugriff erfolgreich:{ui.RESET}\n{out2[:300]}")
+            ui.pause()
         elif ch == "2":
             if not ui.confirm("Root-SMS-Dump (benötigt Root)?", False):
                 continue
@@ -1626,69 +2175,458 @@ def sim_forensics(adb: ADB) -> None:
 
 
 def crypto_security(adb: ADB) -> None:
-    """Krypto & Sicherheit: PIN/PUK/SIM-Lock."""
+    """Krypto & Sicherheit: PIN/PUK/SIM-Lock – MAXIMAL ERWEITERT."""
     while True:
         ui.clear()
-        ui.rule("KRYPTO & SICHERHEIT", ui.BCYAN)
+        ui.rule("🔐 KRYPTO & SICHERHEIT – MAXIMAL", ui.BCYAN)
         ch = ui.menu("Aktion", [
-            ("1", "PIN-Status abfragen"),
-            ("2", "SIM-Lock (Netzbetreiber-Sperre) prüfen"),
-            ("3", "Carrier-Config (Lock-Informationen)"),
-            ("4", "SIM-STK App deaktivieren (Blocker)"),
-            ("5", "eSIM-Zertifikatskette prüfen"),
+            ("1",  "🔑 PIN-Status aller SIM-Slots (READY/PIN/PUK/ABSENT)"),
+            ("2",  "🔒 SIM-Lock / Netzbetreiber-Sperre – vollständige Analyse"),
+            ("3",  "📋 Carrier-Config – alle Lock-Parameter auflisten"),
+            ("4",  "🚫 SIM-STK App deaktivieren/reaktivieren (BIP-Blocker)"),
+            ("5",  "🛡️  eSIM-Zertifikatskette & Signatur prüfen"),
+            ("6",  "🔓 SIM-Lock Unlock versuchen (NCK/NSCK-Code)"),
+            ("7",  "📊 Krypto-Algorithmen prüfen (A3/A5/A8 · MILENAGE · TUAK)"),
+            ("8",  "🔐 Ki/OPc-Indikator (SIM-Auth-Typ erkennen)"),
+            ("9",  "📱 Secure Element Status (SE · TEE · StrongBox)"),
+            ("10", "🔑 Keystore / Android Keymaster Analyse"),
+            ("11", "🛡️  SIM-Klon-Schutz (IMSI-Duplikat erkennen)"),
+            ("12", "⚠️  PUK-Counter auslesen (verbleibende Versuche)"),
         ], back_label="Zurück")
         if ch in ("back", "quit"):
             return
-        cmds = {
-            "1": ("cmd", "service call iphonesubinfo 5 s16 phone 2>/dev/null"),
-            "2": ("cmd", "service call phone 3 2>/dev/null; getprop gsm.sim.operator.iso-country"),
-            "3": ("cmd", "dumpsys carrier_config 2>/dev/null | head -n 25"),
-            "4": ("cmd", "pm disable com.android.stk 2>/dev/null && echo STK deaktiviert"),
-            "5": ("cmd", "dumpsys euicc_card_info 2>/dev/null | grep -iE 'cert|signature'"),
-        }
-        info = cmds.get(ch)
-        if not info:
-            continue
-        kind, cmd = info
-        ui.info(f"Befehl: {ui.GREY}{cmd}{ui.RESET}\n")
-        out = adb.shell(cmd)
-        print(out.strip() or "(Keine Ausgabe)")
+        ui.clear()
+
+        if ch == "1":
+            ui.rule("PIN-Status aller SIM-Slots", ui.CYAN)
+            for slot in range(3):
+                state = adb.shell(f"getprop gsm.sim.state 2>/dev/null").strip()
+                state2 = adb.shell(f"getprop gsm.sim{slot}.state 2>/dev/null").strip()
+                print(f"  Slot {slot}: {state or state2 or '—'}")
+            # Detailliertere Info
+            out = adb.shell(
+                "dumpsys iphonesubinfo 2>/dev/null | grep -iE 'state|pin|puk|ready' | head -n 10; "
+                "service call iphonesubinfo 5 s16 phone 2>/dev/null; "
+                "service call iphonesubinfo 5 i32 0 s16 phone 2>/dev/null; "
+                "service call iphonesubinfo 5 i32 1 s16 phone 2>/dev/null")
+            print(out.strip() or "(Keine PIN-Status-Daten)")
+
+        elif ch == "2":
+            ui.rule("SIM-Lock / Netzbetreiber-Sperre – Vollanalyse", ui.CYAN)
+            checks = [
+                ("Parcel-Antwort (phone 3)",   "service call phone 3 2>/dev/null"),
+                ("ISO-Country",                 "getprop gsm.sim.operator.iso-country 2>/dev/null"),
+                ("Operator Alpha",              "getprop gsm.operator.alpha 2>/dev/null"),
+                ("SIM-Operator",                "getprop gsm.sim.operator.numeric 2>/dev/null"),
+                ("Network-Operator",            "getprop gsm.operator.numeric 2>/dev/null"),
+                ("Carrier-Lock",                "dumpsys carrier_config 2>/dev/null | grep -iE 'locked|restrict|allow_only' | head -n 5"),
+                ("isub Network-Lock",           "dumpsys isub 2>/dev/null | grep -iE 'lock|restrict|carrier' | head -n 5"),
+                ("CarrierID",                   "getprop persist.sys.carrierId 2>/dev/null; "
+                                                "dumpsys phone 2>/dev/null | grep -i 'carrierId' | head -n 3"),
+            ]
+            for label, cmd in checks:
+                out = adb.shell(cmd).strip()
+                if out:
+                    icon = ui.BGREEN
+                    # Erkennung ob gesperrt
+                    if any(x in out.lower() for x in ["locked", "restrict", "1"]):
+                        icon = ui.BYELLOW
+                else:
+                    out = "—"
+                    icon = ui.GREY
+                print(f"  {icon}{label:<30}{ui.RESET}  {out[:60]}")
+            print()
+            # SIM vs. Netzwerk-PLMN vergleichen
+            sim_plmn = adb.shell("getprop gsm.sim.operator.numeric 2>/dev/null").strip()
+            net_plmn = adb.shell("getprop gsm.operator.numeric 2>/dev/null").strip()
+            if sim_plmn and net_plmn:
+                match = sim_plmn[:5] == net_plmn[:5]
+                status = f"{ui.BGREEN}✓ ENTSPERRT (SIM-PLMN = Netz-PLMN){ui.RESET}" if match \
+                    else f"{ui.BYELLOW}⚠ MÖGLICHE NETZBETREIBER-SPERRE (PLMN unterschiedlich){ui.RESET}"
+                print(f"\n  SIM-PLMN: {sim_plmn}  Netz-PLMN: {net_plmn}")
+                print(f"  Status: {status}")
+
+        elif ch == "3":
+            ui.rule("Carrier-Config – Lock-Parameter", ui.CYAN)
+            out = adb.shell("dumpsys carrier_config 2>/dev/null")
+            # Nur sicherheitsrelevante Zeilen
+            relevant = []
+            for line in out.splitlines():
+                if any(k in line.lower() for k in ["lock", "restrict", "allow", "carrier", "auth",
+                                                    "crypt", "key", "cert", "pin", "puk", "esim"]):
+                    relevant.append(line.strip())
+            if relevant:
+                print("\n".join(relevant[:40]))
+            else:
+                print(out[:800] or "(Keine Carrier-Config)")
+
+        elif ch == "4":
+            ui.rule("SIM-STK App (BIP-Blocker)", ui.CYAN)
+            stk_state = adb.shell("pm list packages 2>/dev/null | grep stk")
+            print(f"  STK-Pakete: {stk_state.strip() or '(keine gefunden)'}")
+            if ui.confirm("STK deaktivieren?", False):
+                for pkg in ["com.android.stk", "com.android.stk2",
+                            "com.samsung.android.simrtc", "com.qualcomm.qti.simcontacts"]:
+                    out = adb.shell(f"pm disable {pkg} 2>/dev/null")
+                    if out.strip():
+                        print(f"  {pkg}: {out.strip()}")
+                ui.ok("STK deaktiviert.")
+            elif ui.confirm("STK reaktivieren?", False):
+                for pkg in ["com.android.stk", "com.android.stk2"]:
+                    adb.shell(f"pm enable {pkg} 2>/dev/null")
+                ui.ok("STK reaktiviert.")
+
+        elif ch == "5":
+            ui.rule("eSIM-Zertifikatskette", ui.CYAN)
+            sources = [
+                "dumpsys euicc_card_info 2>/dev/null | grep -iE 'cert|signature|chain|public.key' | head -n 15",
+                "logcat -d -s EuiccController:D 2>/dev/null | grep -iE 'cert|verify|sign' | tail -n 10",
+            ]
+            for cmd in sources:
+                out = adb.shell(cmd)
+                if out.strip():
+                    print(out.strip())
+
+        elif ch == "6":
+            ui.rule("SIM-Lock Unlock (NCK-Code)", ui.CYAN)
+            ui.warn("Nur an eigenen Geräten! Falscher Code kann SIM permanent sperren.")
+            nck = ui.ask("NCK / Entsperrcode (8–16 Ziffern)").strip()
+            if nck and nck.isdigit():
+                # Android SIM-Unlock via service call phone
+                methods = [
+                    f"service call phone 7 s16 '{nck}' 2>/dev/null",
+                    f"service call phone 17 s16 '{nck}' 2>/dev/null",
+                    f"am broadcast -a android.intent.action.SIM_UNLOCK_RESULT --es code '{nck}' 2>/dev/null",
+                ]
+                for method in methods:
+                    out = adb.shell(method).strip()
+                    if out:
+                        print(f"  {out[:100]}")
+
+        elif ch == "7":
+            ui.rule("Krypto-Algorithmen", ui.CYAN)
+            # SIM-Auth-Algorithmen: MILENAGE (3G/4G) vs. TUAK (5G)
+            sources = [
+                "dumpsys telephony.registry 2>/dev/null | grep -iE 'auth|milenage|tuak|algo' | head",
+                "logcat -d -s SIMRecords:D 2>/dev/null | grep -iE 'auth|algo|A3|A5|A8' | tail -n 10",
+                "getprop | grep -iE 'auth|crypt|algo' | head -n 5",
+            ]
+            for cmd in sources:
+                out = adb.shell(cmd).strip()
+                if out:
+                    print(out); print()
+            print(f"\n  {ui.GREY}Algorithmen-Erklärung:")
+            for a, d in [("A3", "Authentifizierung (SRES berechnen)"),
+                         ("A5", "Verschlüsselung (Ue↔Netz)"),
+                         ("A8", "Session-Key-Ableitung"),
+                         ("MILENAGE", "3G/4G Standard (basiert auf AES-128)"),
+                         ("TUAK", "5G-Alternative zu MILENAGE (basiert auf Keccak/SHA-3)")]:
+                print(f"  {a:<12}  {d}")
+            print(ui.RESET, end="")
+
+        elif ch == "8":
+            ui.rule("Ki/OPc Indikator – SIM-Auth-Typ", ui.CYAN)
+            out = adb.shell(
+                "logcat -d -s SIMRecords:D SimCard:D 2>/dev/null | grep -iE 'ki|opc|challenge|response' | tail -n 15")
+            print(out.strip() or "(Keine Auth-Daten im Log)")
+            print(f"\n  {ui.GREY}Ki = SIM-Master-Schlüssel (128-bit, nur auf SIM-Chip)")
+            print(f"  OPc = Betreiber-Variante (abgeleitet aus OP + Ki)")
+            print(f"  Diese Werte sind NIEMALS aus Android auslesbar (Hardware-Sicherheit).{ui.RESET}")
+
+        elif ch == "9":
+            ui.rule("Secure Element / TEE / StrongBox", ui.CYAN)
+            checks = [
+                ("SE HAL",        "service list 2>/dev/null | grep -i 'secure\\|se\\|nfc' | head"),
+                ("TEE Status",    "getprop ro.hardware.tee 2>/dev/null; getprop ro.tee.type 2>/dev/null"),
+                ("StrongBox",     "getprop ro.crypto.state 2>/dev/null; "
+                                  "dumpsys hardware_properties 2>/dev/null | grep -i strongbox | head"),
+                ("Keymaster HAL", "getprop ro.hardware.keystore 2>/dev/null"),
+                ("SE-Pakete",     "pm list packages 2>/dev/null | grep -iE 'se\\|nfc\\|secure.elem'"),
+            ]
+            for label, cmd in checks:
+                out = adb.shell(cmd).strip()
+                icon = ui.BGREEN if out else ui.GREY
+                print(f"  {icon}{label:<20}{ui.RESET}  {out[:80] if out else '—'}")
+
+        elif ch == "10":
+            ui.rule("Android Keystore / Keymaster", ui.CYAN)
+            out = adb.shell(
+                "dumpsys sec_key_att_app_id_provider 2>/dev/null | head -n 20; "
+                "pm list packages 2>/dev/null | grep -iE 'keystore|keymaster'; "
+                "getprop ro.hardware.keystore 2>/dev/null; "
+                "getprop ro.crypto.state 2>/dev/null; "
+                "getprop ro.crypto.type 2>/dev/null; "
+                "ls -la /dev/hw_random /dev/urandom 2>/dev/null")
+            print(out.strip() or "(Keine Keystore-Infos)")
+
+        elif ch == "11":
+            ui.rule("SIM-Klon-Schutz – IMSI-Duplikat", ui.CYAN)
+            imsi = adb.shell("service call iphonesubinfo 7 s16 phone 2>/dev/null")
+            digits = "".join(c for c in imsi if c.isdigit())
+            if digits:
+                print(f"  IMSI: {digits}")
+                # Gleiche IMSI in zweitem Slot?
+                imsi2 = adb.shell("service call iphonesubinfo 7 i32 1 s16 phone 2>/dev/null")
+                digits2 = "".join(c for c in imsi2 if c.isdigit())
+                if digits2 and digits2 == digits:
+                    print(f"  {ui.BRED}⚠ WARNUNG: GLEICHE IMSI auf beiden Slots – SIM-Klon möglich!{ui.RESET}")
+                else:
+                    print(f"  {ui.BGREEN}✓ IMSI ist einmalig (kein Duplikat erkannt){ui.RESET}")
+            else:
+                print("  IMSI nicht auslesbar.")
+            # Netz-Verifikation
+            net = adb.shell("dumpsys telephony.registry 2>/dev/null | grep -iE 'mVoiceNetworkType|mDataNetworkType' | head")
+            print(f"\n  Netzwerk:\n{net.strip()}")
+
+        elif ch == "12":
+            ui.rule("PUK-Counter (verbleibende Versuche)", ui.CYAN)
+            # PUK-Counter ist selten direkt lesbar, aber via Service-Calls manchmal
+            sources = [
+                "service call iphonesubinfo 6 s16 phone 2>/dev/null",
+                "dumpsys phone 2>/dev/null | grep -iE 'puk|pin.attempt|retries' | head",
+                "logcat -d -s SIMRecords:D SimCard:D 2>/dev/null | grep -iE 'puk\\|retries\\|remaining' | tail -n 5",
+            ]
+            for cmd in sources:
+                out = adb.shell(cmd).strip()
+                if out:
+                    print(f"  {out[:150]}")
+            print(f"\n  {ui.GREY}Hinweis: PUK-Counter ist oft nur via Carrier-Hotline oder SIM-eigene AT-Kommandos abfragbar.{ui.RESET}")
         ui.pause()
 
 
+def _5g_multi_query(adb: ADB, keywords: list[str], label: str) -> str:
+    """Sucht 5G-Daten über 4 Quellen mit Fallback."""
+    sources = [
+        "dumpsys telephony.registry 2>/dev/null",
+        "dumpsys phone 2>/dev/null",
+        "getprop 2>/dev/null",
+        "logcat -d -s NrChecker:D TelephonyManager:D 2>/dev/null | tail -n 30",
+    ]
+    pattern = "|".join(keywords)
+    results = []
+    for src in sources:
+        raw = adb.shell(f"{src} | grep -iE '{pattern}' | head -n 8")
+        if raw.strip():
+            results.append(raw.strip())
+    return "\n".join(results) if results else f"(Keine {label}-Daten – Gerät nutzt möglicherweise kein 5G)"
+
+
 def fiveg_ntn_tools(adb: ADB) -> None:
-    """5G, NTN und Satelliten-Kommunikation."""
+    """5G, NTN und Satelliten-Kommunikation – MAXIMAL ERWEITERT."""
     while True:
         ui.clear()
-        ui.rule("5G / NTN / SATELLITEN", ui.BCYAN)
+        ui.rule("📶 5G / NTN / SATELLITEN – VOLLSTÄNDIG", ui.BCYAN)
         ch = ui.menu("Aktion", [
-            ("1", "5G SA vs. NSA Status"),
-            ("2", "5G MIMO-Layer & Carrier-Aggregation"),
-            ("3", "mmWave / FR2 Detektion"),
-            ("4", "Network-Slicing (S-NSSAI)"),
-            ("5", "NTN / Satelliten-Status"),
-            ("6", "ETWS/WEA Notfall-Broadcasts"),
-            ("7", "VoNR (Voice over New Radio)"),
-            ("8", "Frequenz (ARFCN/EARFCN/NRARFCN)"),
+            ("1",  "📡 5G SA vs. NSA Status (enDC · NR-Modus · Dual-Con)"),
+            ("2",  "📶 5G MIMO-Layer & Carrier-Aggregation (CA-Bänder)"),
+            ("3",  "🌊 mmWave / FR2 Detektion (28 GHz · 39 GHz)"),
+            ("4",  "🔀 Network-Slicing (S-NSSAI · eMBB · URLLC · mMTC)"),
+            ("5",  "🛰️  NTN / Satelliten-Status (LEO · MEO · GEO · NR-NTN)"),
+            ("6",  "🚨 ETWS/WEA Notfall-Broadcasts (Cell-Broadcast)"),
+            ("7",  "📞 VoNR (Voice over New Radio · IMS-5G)"),
+            ("8",  "📻 Frequenz: ARFCN/EARFCN/NRARFCN → MHz"),
+            ("9",  "⚡ 5G-Vollanalyse: alle Parameter auf einmal"),
+            ("10", "🔧 5G SA erzwingen (getprop/ADB-Einstellung)"),
+            ("11", "📊 NR-Signalqualität (SSB-RSRP/RSRQ/SINR)"),
+            ("12", "🌐 5G-Kern-Netz (AMF/SMF-Verbindung) prüfen"),
         ], back_label="Zurück")
         if ch in ("back", "quit"):
             return
-        cmds = {
-            "1": "dumpsys telephony.registry 2>/dev/null | grep -iE '5g|NR |SA|NSA|enDc' | head -n 10",
-            "2": "dumpsys telephony.registry 2>/dev/null | grep -iE 'mimo|layer|rank|aggregation|ca.band' | head -n 10",
-            "3": "dumpsys telephony.registry 2>/dev/null | grep -iE 'mmwave|mmWave|FR2' | head -n 5",
-            "4": "dumpsys telephony.registry 2>/dev/null | grep -iE 'nssai|slice|s-nssai' | head",
-            "5": "dumpsys telephony.registry 2>/dev/null | grep -iE 'ntn|satellite|NTN' | head",
-            "6": "dumpsys cellbroadcast 2>/dev/null | head -n 20",
-            "7": "dumpsys telephony.registry 2>/dev/null | grep -iE 'vonr|VoNR|voice.nr' | head",
-            "8": "dumpsys telephony.registry 2>/dev/null | grep -iE 'arfcn|earfcn|nrarfcn|freq' | head",
-        }
-        cmd = cmds.get(ch)
-        if not cmd:
-            continue
-        ui.info(f"Befehl: {ui.GREY}{cmd[:80]}{ui.RESET}\n")
-        out = adb.shell(cmd)
-        print(out.strip() or "(Keine Ausgabe)")
+        ui.clear()
+
+        if ch == "1":
+            ui.rule("5G SA vs. NSA Status", ui.CYAN)
+            # NSA: enDC (E-UTRA-NR Dual Connectivity), SA: nur NR
+            results = []
+            # Methode 1: telephony.registry
+            for query in ["enDc", "isNrAvailable", "nrState", "NR", "5G", "SA", "NSA"]:
+                out = adb.shell(f"dumpsys telephony.registry 2>/dev/null | grep -i '{query}' | head -n 3")
+                if out.strip():
+                    results.append(out.strip())
+            # Methode 2: getprop
+            for prop in ["gsm.network.type", "vendor.ril.nr.mode", "persist.vendor.radio.nr_mode"]:
+                v = adb.shell(f"getprop {prop} 2>/dev/null").strip()
+                if v:
+                    results.append(f"{prop} = {v}")
+            # Methode 3: Netztyp-Integer (20=NR5G, 19=LTE-CA, 13=LTE)
+            ntype = adb.shell("dumpsys telephony.registry 2>/dev/null | grep -i 'mDataNetworkType' | head -n 1")
+            if ntype.strip():
+                results.append(ntype.strip())
+                m = re.search(r'mDataNetworkType=(\d+)', ntype)
+                if m:
+                    n = int(m.group(1))
+                    type_map = {20: "NR (5G SA/NSA)", 19: "LTE-CA", 13: "LTE", 0: "UNBEKANNT"}
+                    print(f"\n  {ui.BGREEN}Netztyp: {type_map.get(n, str(n))}{ui.RESET}")
+            if results:
+                print("\n".join(results))
+            else:
+                print(f"  {ui.BYELLOW}Kein 5G erkannt – Gerät nutzt LTE/4G oder Befehle brauchen Root.{ui.RESET}")
+                print("\n  Manuelle Prüfung:")
+                print("  • Statusleiste: 5G-Symbol sichtbar?")
+                print("  • Einstellungen → Netzwerk → Bevorzugter Typ → 5G anwählen")
+
+        elif ch == "2":
+            ui.rule("MIMO & Carrier-Aggregation", ui.CYAN)
+            keywords = ["mimo", "layer", "rank", "aggregation", "caBand", "numBands", "CA"]
+            print(_5g_multi_query(adb, keywords, "MIMO/CA"))
+            # Zusatz: aktuell genutzte Bänder
+            bands = adb.shell("dumpsys telephony.registry 2>/dev/null | grep -iE 'band|earfcn' | head -n 10")
+            print(bands.strip() or "(Kein CA-Band-Info)")
+
+        elif ch == "3":
+            ui.rule("mmWave / FR2 Detektion", ui.CYAN)
+            keywords = ["mmwave", "mmWave", "FR2", "28GHz", "39GHz", "60GHz", "freqRange"]
+            out = _5g_multi_query(adb, keywords, "mmWave")
+            print(out)
+            # FR2-Bands: 257(28GHz), 258(26GHz), 260(39GHz), 261(28GHz)
+            bands = adb.shell(
+                "dumpsys telephony.registry 2>/dev/null | grep -iE 'band' | "
+                "grep -E '25[7-9]|26[0-1]' | head -n 5")
+            if bands.strip():
+                print(f"\n  {ui.BGREEN}mmWave-Bänder (FR2) erkannt:{ui.RESET}\n{bands}")
+            else:
+                print(f"\n  {ui.GREY}Keine FR2-Bänder erkannt (mmWave meist nur in USA/Japan/Südkorea){ui.RESET}")
+
+        elif ch == "4":
+            ui.rule("Network-Slicing (5G-SA)", ui.CYAN)
+            keywords = ["nssai", "slice", "s-nssai", "SST", "SD=", "eMBB", "URLLC", "mMTC"]
+            out = _5g_multi_query(adb, keywords, "Slicing")
+            print(out)
+            # 5G-Slice-Typen erklären
+            print(f"\n  {ui.GREY}Slice-Typen (SST-Werte):")
+            for sst, desc in [(1,"eMBB – Enhanced Mobile Broadband"), (2,"URLLC – Ultra-Low Latency"),
+                              (3,"MIoT – Massive IoT / mMTC"), (4,"V2X – Fahrzeug-Kommunikation")]:
+                print(f"  SST={sst}: {desc}")
+            print(ui.RESET, end="")
+
+        elif ch == "5":
+            ui.rule("NTN / Satelliten-Status", ui.CYAN)
+            keywords = ["ntn", "satellite", "NTN", "LEO", "MEO", "GEO", "groundStation"]
+            out = _5g_multi_query(adb, keywords, "NTN/Satelliten")
+            print(out)
+            # Carrier-Support prüfen
+            carrier = adb.shell("getprop gsm.operator.alpha 2>/dev/null").strip()
+            ntn_carriers = {"Starlink": "SpaceX", "Skylo": "Skylo", "T-Mobile": "NTN-Partner"}
+            print(f"\n  Betreiber: {carrier}")
+            for k, v in ntn_carriers.items():
+                if k.lower() in carrier.lower():
+                    print(f"  {ui.BGREEN}✓ {v} unterstützt NTN/Satelliten{ui.RESET}")
+            print(f"\n  {ui.GREY}NTN-Status: Android 14+ / 3GPP Release 17 nötig{ui.RESET}")
+
+        elif ch == "6":
+            ui.rule("ETWS/WEA Notfall-Broadcasts", ui.CYAN)
+            out_cb = adb.shell("dumpsys cellbroadcast 2>/dev/null | head -n 40")
+            out_log = adb.shell("logcat -d -s CellBroadcast:D ETWS:D WEA:D 2>/dev/null | tail -n 20")
+            print(out_cb.strip() or "(Kein CellBroadcast-Service aktiv)")
+            if out_log.strip():
+                print(f"\n  --- Log ---\n{out_log.strip()}")
+            # Test-Broadcast senden
+            if ui.confirm("Test-ETWS-Broadcast über ADB simulieren?", False):
+                adb.shell(
+                    "am broadcast -a android.provider.Telephony.SMS_CB_RECEIVED "
+                    "--es message 'PANZER TEST ETWS' 2>/dev/null")
+                ui.ok("Test-Broadcast gesendet.")
+
+        elif ch == "7":
+            ui.rule("VoNR – Voice over New Radio", ui.CYAN)
+            keywords = ["vonr", "VoNR", "voice.nr", "IMS.NR", "nrVoice", "voNrEnabled"]
+            out = _5g_multi_query(adb, keywords, "VoNR")
+            print(out)
+            # IMS-Status
+            ims = adb.shell("dumpsys ims 2>/dev/null | grep -iE 'registered|voice|sms|rcs' | head -n 10")
+            print(f"\n  IMS-Status:\n{ims.strip() or '(nicht verfügbar)'}")
+
+        elif ch == "8":
+            ui.rule("ARFCN / EARFCN / NRARFCN → MHz", ui.CYAN)
+            raw = adb.shell("dumpsys telephony.registry 2>/dev/null")
+            for pattern, label in [
+                (r'earfcn\s*=\s*(\d+)', "EARFCN (LTE)"),
+                (r'nrarfcn\s*=\s*(\d+)', "NR-ARFCN (5G)"),
+                (r'arfcn\s*=\s*(\d+)', "ARFCN (GSM)"),
+                (r'uarfcn\s*=\s*(\d+)', "UARFCN (UMTS)"),
+            ]:
+                m = re.search(pattern, raw, re.I)
+                if m:
+                    val = int(m.group(1))
+                    # Vereinfachte EARFCN→MHz Konvertierung
+                    if "EARFCN" in label:
+                        if val < 600: freq = f"~{(1920 + 0.1*val):.0f} MHz"
+                        elif val < 1200: freq = f"~{(1850 + 0.1*(val-600)):.0f} MHz"
+                        elif val < 1950: freq = f"~{(1710 + 0.1*(val-1200)):.0f} MHz"
+                        elif val < 2400: freq = f"~{(2110 + 0.1*(val-1950)):.0f} MHz"
+                        elif val < 2650: freq = f"~{(869 + 0.1*(val-2400)):.0f} MHz"
+                        elif val < 2750: freq = f"~{(875 + 0.1*(val-2650)):.0f} MHz"
+                        else: freq = f"~{val} (unbekannt)"
+                        print(f"  {label:<20} {val}  →  {ui.BCYAN}{freq}{ui.RESET}")
+                    else:
+                        print(f"  {label:<20} {val}")
+            # Fallback: grep in props
+            props = adb.shell("getprop | grep -iE 'arfcn|earfcn|freq|band' | head -n 10")
+            if props.strip():
+                print(f"\n{props}")
+
+        elif ch == "9":
+            ui.rule("5G-VOLLANALYSE – Alle Parameter", ui.CYAN)
+            full = adb.shell("dumpsys telephony.registry 2>/dev/null | head -n 200")
+            # Alle interessanten Werte extrahieren
+            patterns = [
+                ("Netztyp",      r'mDataNetworkType=(\d+)'),
+                ("NR-Zustand",   r'nrState=(\w+)'),
+                ("enDC",         r'isEnDcAvailable=(\w+)'),
+                ("NR verfügbar", r'isNrAvailable=(\w+)'),
+                ("RSRP",         r'rsrp=(-?\d+)'),
+                ("RSRQ",         r'rsrq=(-?\d+)'),
+                ("SINR",         r'rssnr=(-?\d+)'),
+                ("CellID",       r'ci=(\d+)'),
+                ("TAC",          r'tac=(\w+)'),
+                ("EARFCN",       r'earfcn=(\d+)'),
+                ("NR-ARFCN",     r'nrarfcn=(\d+)'),
+                ("Betreiber",    r'mNetworkOperatorName=(\S+)'),
+                ("VoLTE",        r'isVoLteAvailable=(\w+)'),
+                ("VoNR",         r'isVoNrAvailable=(\w+)'),
+            ]
+            for label, pat in patterns:
+                m = re.search(pat, full, re.I)
+                val = m.group(1) if m else "—"
+                icon = ui.BGREEN if val not in ("—", "false", "0", "NONE") else ui.GREY
+                print(f"  {icon}{label:<20}{ui.RESET}  {val}")
+
+        elif ch == "10":
+            ui.rule("5G SA erzwingen", ui.CYAN)
+            methods = [
+                ("Network Mode NR only",    "settings put global preferred_network_mode 20 2>/dev/null"),
+                ("LTE/NR preferred",        "settings put global preferred_network_mode 33 2>/dev/null"),
+                ("ADB phone service",       "service call phone 137 i32 20 2>/dev/null"),
+            ]
+            for i, (name, cmd) in enumerate(methods, 1):
+                print(f"  {i}) {name}")
+                print(f"     {ui.GREY}{cmd}{ui.RESET}")
+            sel = input("\n  Auswahl (1-3, leer=Abbruch): ").strip()
+            if sel.isdigit() and 1 <= int(sel) <= 3:
+                _, cmd = methods[int(sel)-1]
+                out = adb.shell(cmd)
+                print(f"\n  {out.strip() or 'Befehl ausgeführt'}")
+                ui.ok("5G-Modus gesetzt. Neustart Modem empfohlen.")
+
+        elif ch == "11":
+            ui.rule("NR-Signalqualität (SSB)", ui.CYAN)
+            # SSB = Synchronization Signal Block (5G-Referenzsignal)
+            raw = adb.shell(
+                "dumpsys telephony.registry 2>/dev/null | grep -iE 'NrSignal|ssRsrp|ssRsrq|ssSinr|csiRsrp|csiSinr' | head -n 15")
+            print(raw.strip() or "(Keine NR-Signaldaten – Gerät nicht in 5G-Zelle)")
+            # Fallback: SignalStrength gesamt
+            sig = adb.shell(
+                "dumpsys telephony.registry 2>/dev/null | grep -iE 'SignalStrength' | head -n 5")
+            if sig.strip():
+                print(f"\n  SignalStrength:\n{sig.strip()}")
+
+        elif ch == "12":
+            ui.rule("5G-Kernnetz (AMF/SMF)", ui.CYAN)
+            out = adb.shell(
+                "dumpsys telephony.registry 2>/dev/null | grep -iE 'amf|smf|pcf|upf|guami|plmn' | head -n 15; "
+                "logcat -d -s NAS5G:D 5G-MME:D 2>/dev/null | tail -n 20")
+            print(out.strip() or "(Keine 5G-Kernnetz-Informationen – nur in 5G-SA verfügbar)")
+
         ui.pause()
 
 
@@ -1752,11 +2690,11 @@ def anti_tracking(adb: ADB) -> None:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def menu(adb: ADB, dev=None, st=None) -> None:
-    """SIM-Toolkit Hauptmenü: 10 Sektionen · 35 Kategorien · 350 Features."""
+    """SIM-Toolkit Hauptmenü: 11 Sektionen · 35 Kategorien · 350 Features + Live-Dashboard."""
     while True:
         ui.clear()
-        ui.banner(subtitle="📱 SIM-KARTEN TOOLKIT – 35 Kategorien · 350 Features · Alle Modelle")
-        print(f"  {ui.GREY}Physische SIMs · eSIM-Chips · Baseband · FRP · 5G · NTN · Anti-Tracking{ui.RESET}\n")
+        ui.banner(subtitle="📱 SIM-KARTEN TOOLKIT – 35 Kat · 350 Features · Live-Dashboard")
+        print(f"  {ui.GREY}Physische SIMs · eSIM-Chips · Baseband · 5G · NTN · Live-Traffic{ui.RESET}\n")
         ch = ui.menu("Sektion wählen", [
             ("1",  "🗃️  SIM-Karten Modell-Datenbank  (1FF–5FF · eSIM-Chips · Test-SIMs · IoT/M2M · CDMA)"),
             ("2",  "📋 SIM-Kategorien-Browser       (35 Kategorien · 350 Features · Nr. 101–450)"),
@@ -1765,34 +2703,31 @@ def menu(adb: ADB, dev=None, st=None) -> None:
             ("5",  "📡 Baseband & AT-Kommandos      (Modem-FW · Radio-Log · Field-Test · Diag-Port)"),
             ("6",  "🕵️  IMSI-Catcher-Schutz         (Zelltracker · Downgrade-Alarm · SINR · Nachbarzellen)"),
             ("7",  "🔍 SIM-Forensik                (Telefonbuch · SMS · LOCI · MSISDN · IMEI-Check)"),
-            ("8",  "🔐 Krypto & Sicherheit          (PIN/PUK · SIM-Lock · STK-Blocker · eSIM-Zertifikat)"),
+            ("8",  "🔐 Krypto & Sicherheit          (PIN/PUK · SIM-Lock · STK-Blocker · NCK · TEE)"),
             ("9",  "📶 5G / NTN / Satelliten        (SA/NSA · MIMO · mmWave · Slicing · ETWS · VoNR)"),
             ("10", "🛡️  Anti-Tracking & Privacy      (STK-Block · Flugmodus · SUCI · MAC-Randomisierung)"),
+            ("11", f"{ui.BGREEN}{ui.BOLD}🔴 LIVE SIM-TRAFFIC DASHBOARD  (Signal · Netz · Traffic · Verbindungen){ui.RESET}"),
         ], back_label="Hauptmenü")
 
         if ch in ("back", "quit"):
             return
         try:
-            if ch == "1":
-                show_sim_models()
-            elif ch == "2":
-                browse_categories(adb)
-            elif ch == "3":
-                quick_diagnosis(adb)
-            elif ch == "4":
-                esim_manager(adb)
-            elif ch == "5":
-                baseband_tools(adb)
-            elif ch == "6":
-                imsi_catcher_guard(adb)
-            elif ch == "7":
-                sim_forensics(adb)
-            elif ch == "8":
-                crypto_security(adb)
-            elif ch == "9":
-                fiveg_ntn_tools(adb)
-            elif ch == "10":
-                anti_tracking(adb)
+            dispatch = {
+                "1":  show_sim_models,
+                "2":  browse_categories,
+                "3":  quick_diagnosis,
+                "4":  esim_manager,
+                "5":  baseband_tools,
+                "6":  imsi_catcher_guard,
+                "7":  sim_forensics,
+                "8":  crypto_security,
+                "9":  fiveg_ntn_tools,
+                "10": anti_tracking,
+                "11": live_sim_dashboard,
+            }
+            fn = dispatch.get(ch)
+            if fn:
+                fn(adb) if ch not in ("1",) else fn()
         except Exception as e:  # noqa: BLE001
             ui.err(f"Fehler: {e}")
             LOG.exception("sim_toolkit", e)

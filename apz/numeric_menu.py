@@ -85,6 +85,9 @@ class NumericMainMenu:
 
         # TIER 10: SIM-TOOLKIT
         (55, "💳 SIM-TOOLKIT",    "35 Kategorien · 350 Features · Alle SIM-Modelle", "simtoolkit"),
+
+        # TIER 11: APP-DOMAIN MONITOR
+        (56, "🌐 APP-DOMAIN MONITOR", "Echtzeit DNS · Tracker · Blacklist · App-Traffic", "appdomains"),
     ]
 
     def __init__(self, adb=None):
@@ -164,7 +167,14 @@ class NumericMainMenu:
         # Gruppe 10: SIM-Toolkit
         print(f"{ui.BCYAN}{'TIER 10: SIM-KARTEN TOOLKIT':^80}{ui.RESET}")
         print()
-        for num, icon, desc, key in self.MENU_ITEMS[54:]:
+        for num, icon, desc, key in self.MENU_ITEMS[54:55]:
+            print(f"  {ui.BOLD}{num:2d}{ui.RESET}  {icon:30}  {desc}")
+        print()
+
+        # Gruppe 11: App-Domain Monitor
+        print(f"{ui.BGREEN}{'TIER 11: APP-DOMAIN MONITOR':^80}{ui.RESET}")
+        print()
+        for num, icon, desc, key in self.MENU_ITEMS[55:]:
             print(f"  {ui.BOLD}{num:2d}{ui.RESET}  {icon:30}  {desc}")
         print()
 
@@ -174,7 +184,7 @@ class NumericMainMenu:
         print("   Q  Beenden")
         print()
 
-        choice = input(f"  {ui.BOLD}☠ ❯ Auswahl (0-55, Q): {ui.RESET}").strip().upper()
+        choice = input(f"  {ui.BOLD}☠ ❯ Auswahl (0-56, Q): {ui.RESET}").strip().upper()
         return choice
 
     def get_handler(self, choice: str) -> str:

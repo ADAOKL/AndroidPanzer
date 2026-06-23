@@ -83,6 +83,7 @@ _MODULE_REGISTRY: list[tuple[int, str, str, str]] = [
     (53, "📱 KONTO-SCANNER",        "account_scanner",          "menu"),
     (54, "🔒 FRP-SCANNER",          "frp_scanner",              "menu"),
     (55, "💳 SIM-TOOLKIT",          "sim_toolkit",              "menu"),
+    (56, "🌐 APP-DOMAIN MONITOR",   "app_traffic_monitor",      "menu"),
 ]
 
 
@@ -143,6 +144,7 @@ _MODULE_DEPS: dict[str, dict] = {
     "settings_manager":         {"bins": [],                         "pips": []},
     "numeric_menu":             {"bins": [],                         "pips": []},
     "sim_toolkit":              {"bins": ["adb"],                    "pips": []},
+    "app_traffic_monitor":      {"bins": ["adb"],                    "pips": []},
 }
 
 

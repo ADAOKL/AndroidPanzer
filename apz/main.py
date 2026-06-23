@@ -16,7 +16,8 @@ from . import (acquire, aishell, apkscan, appscan, bootloop, brands, casedb, cus
                intelligent_engine, database_scanner, lab_manager, keyword_recorder, adult_activity_detector, wifi_room_scanner_3d,
                forensic_audio_analyzer, security_framework, password_manager, audio_playback, adb_shell, auto_root_engine,
                numeric_menu, settings_manager, google_account_scanner,
-               account_scanner, frp_scanner, progress, sim_toolkit)
+               account_scanner, frp_scanner, progress, sim_toolkit,
+               app_traffic_monitor)
 from .adb import ADB, AdbError, Device
 from .util import LOG
 
@@ -428,6 +429,9 @@ def _numeric_main_menu(adb: ADB, dev: Device, st: dict, data: dict) -> None:
             elif choice_lower == "55":
                 _bar("💳 SIM-TOOLKIT", _s("55"))
                 sim_toolkit.menu(adb, dev, st)
+            elif choice_lower == "56":
+                _bar("🌐 APP-DOMAIN MONITOR", _s("56"))
+                app_traffic_monitor.menu(adb, dev, st, data)
             else:
                 ui.warn("Ungültige Option!")
                 time.sleep(0.5)

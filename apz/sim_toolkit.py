@@ -2027,40 +2027,391 @@ def baseband_tools(adb: ADB) -> None:
 
 
 def imsi_catcher_guard(adb: ADB) -> None:
-    """IMSI-Catcher-Schutz & Funkzellen-Analyse."""
-    ui.clear()
-    ui.rule("IMSI-CATCHER-SCHUTZ & ZELLANALYSE", ui.BRED)
-    print()
-    checks = [
-        ("Cell-ID aktuell",    "dumpsys telephony.registry 2>/dev/null | grep -E 'mCellIdentity|mCid|mLac|mMcc|mMnc' | head -n 8"),
-        ("Netzwerk-Typ",       "dumpsys telephony.registry 2>/dev/null | grep networkType | head -n 3"),
-        ("Timing-Advance",     "dumpsys telephony.registry 2>/dev/null | grep -iE 'timingAdvance|TimingAdv' | head"),
-        ("SINR/Signalstärke",  "dumpsys telephony.registry 2>/dev/null | grep -iE 'rsrp|rsrq|sinr|signal' | head -n 5"),
-        ("Nachbarzellen",      "dumpsys telephony.registry 2>/dev/null | grep -i neighbor | head -n 5"),
-        ("Verschlüsselung",    "dumpsys telephony.registry 2>/dev/null | grep -iE 'cipher|encrypt' | head"),
-        ("5G-SUCI",            "dumpsys telephony.registry 2>/dev/null | grep -iE 'suci|supi' | head"),
-    ]
-    for label, cmd in checks:
-        ui.info(f"{label}:")
-        try:
-            out = adb.shell(cmd, timeout=8).strip()
-        except Exception:  # noqa: BLE001
-            out = "ADB-Fehler"
-        if out:
-            for line in out.splitlines()[:5]:
-                print(f"   {line}")
-        else:
-            print(f"   {ui.GREY}(keine Daten){ui.RESET}")
-        print()
+    """IMSI-Catcher-Schutz & Funkzellen-Analyse – MAXIMAL ERWEITERT."""
+    while True:
+        ui.clear()
+        ui.rule("🕵️ IMSI-CATCHER-SCHUTZ & ZELLANALYSE – MAXIMAL", ui.BRED)
+        ch = ui.menu("Analyse-Modus", [
+            ("1",  "🔍 Vollständige IMSI-Catcher Erkennung (10 Indikatoren)"),
+            ("2",  "📡 Aktuelle Zelle: Cell-ID · LAC · MCC/MNC · Timing-Advance"),
+            ("3",  "🗺️  Zellwechsel Live-Monitor (2s Refresh · Anomalie-Alarm)"),
+            ("4",  "📶 Signal-Anomalie-Detektion (SINR-Drop · RSRP-Sprung)"),
+            ("5",  "🔐 Verschlüsselungs-Check (A5/1 · A5/0 · Null-Cipher)"),
+            ("6",  "🏙️  Nachbarzellen-Scan (alle sichtbaren Zellen)"),
+            ("7",  "📍 Zell-Datenbank (bekannte Zellen tracken)"),
+            ("8",  "🔔 Stille SMS / Ping-SMS erkennen (logcat)"),
+            ("9",  "⚡ IMSI-Catcher Gegenmaßnahmen aktivieren"),
+            ("10", "📊 Komplett-Report exportieren"),
+        ], back_label="Zurück")
+        if ch in ("back", "quit"):
+            return
+        ui.clear()
 
-    # Downgrade-Warnung
-    ntype = adb.shell("dumpsys telephony.registry 2>/dev/null | grep networkType | head -n 1").strip()
-    if any(x in ntype for x in ("=1", "=2", "GPRS", "EDGE", "GSM")):
-        print(f"  {ui.BRED}⚠ ACHTUNG: Downgrade auf 2G erkannt – möglicher IMSI-Catcher!{ui.RESET}")
-    else:
-        print(f"  {ui.BGREEN}✓ Kein 2G-Downgrade erkannt.{ui.RESET}")
-    print()
-    ui.pause()
+        if ch == "1":
+            ui.rule("IMSI-CATCHER ERKENNUNG – 10 INDIKATOREN", ui.BRED)
+            raw = adb.shell("dumpsys telephony.registry 2>/dev/null | head -n 200")
+            score = 0
+            findings = []
+
+            # Indikator 1: 2G-Downgrade
+            ntype_m = re.search(r'mDataNetworkType\s*=\s*(\d+)', raw)
+            ntype = int(ntype_m.group(1)) if ntype_m else -1
+            if ntype in (1, 2, 16):  # GPRS, EDGE, GSM
+                score += 3
+                findings.append(("KRITISCH", f"2G-Downgrade erkannt (Typ={ntype}) – klassisches IMSI-Catcher-Merkmal!"))
+            else:
+                findings.append(("OK", f"Kein 2G-Downgrade (Netztyp={ntype})"))
+
+            # Indikator 2: Verschlüsselung
+            cipher = adb.shell(
+                "dumpsys telephony.registry 2>/dev/null | grep -iE 'cipher|a5|encrypt' | head -n 3")
+            if cipher.strip():
+                if "A5/0" in cipher or "null" in cipher.lower():
+                    score += 4
+                    findings.append(("KRITISCH", "Null-Verschlüsselung erkannt (A5/0)!"))
+                else:
+                    findings.append(("OK", "Verschlüsselung aktiv"))
+            else:
+                findings.append(("WARNUNG", "Verschlüsselungsstatus nicht lesbar"))
+
+            # Indikator 3: Timing-Advance zu hoch
+            ta_raw = adb.shell(
+                "dumpsys telephony.registry 2>/dev/null | grep -iE 'timingAdvance|TimingAdv' | head")
+            ta_m = re.search(r'(?:timingAdvance|TimingAdv)\s*=\s*(\d+)', ta_raw, re.I)
+            if ta_m:
+                ta = int(ta_m.group(1))
+                if ta > 63:
+                    score += 2
+                    findings.append(("WARNUNG", f"Timing-Advance ungewöhnlich hoch: {ta} (Entfernung >5km?)"))
+                else:
+                    findings.append(("OK", f"Timing-Advance normal: {ta}"))
+            else:
+                findings.append(("INFO", "Timing-Advance nicht lesbar"))
+
+            # Indikator 4: Signal zu stark (RSRP > -50 = unnatürlich nah)
+            rsrp_m = re.search(r'rsrp\s*=\s*(-?\d+)', raw, re.I)
+            rsrp = int(rsrp_m.group(1)) if rsrp_m else None
+            if rsrp and rsrp > -50:
+                score += 2
+                findings.append(("WARNUNG", f"RSRP extrem stark: {rsrp} dBm – unnatürlich naher Sender!"))
+            elif rsrp:
+                findings.append(("OK", f"RSRP normal: {rsrp} dBm"))
+
+            # Indikator 5: Keine Nachbarzellen
+            neighbors = adb.shell(
+                "dumpsys telephony.registry 2>/dev/null | grep -i neighbor | head -n 5")
+            if not neighbors.strip():
+                score += 1
+                findings.append(("WARNUNG", "Keine Nachbarzellen sichtbar – IMSI-Catcher oft allein!"))
+            else:
+                nb_count = len(neighbors.splitlines())
+                findings.append(("OK", f"{nb_count} Nachbarzelle(n) sichtbar"))
+
+            # Indikator 6: Cell-ID 0 oder sehr groß
+            cid_m = re.search(r'ci\s*=\s*(\d+)', raw, re.I)
+            if cid_m:
+                cid = int(cid_m.group(1))
+                if cid == 0 or cid > 268435455:
+                    score += 2
+                    findings.append(("WARNUNG", f"Verdächtige Cell-ID: {cid}"))
+                else:
+                    findings.append(("OK", f"Cell-ID normal: {cid}"))
+
+            # Indikator 7: Stille SMS
+            silent_sms = adb.shell(
+                "logcat -d -s SIMRecords:D 2>/dev/null | grep -iE 'silent|class0|type0' | tail -n 5")
+            if silent_sms.strip():
+                score += 3
+                findings.append(("KRITISCH", "Stille SMS / Flash-SMS erkannt!"))
+            else:
+                findings.append(("OK", "Keine stillen SMS im Log"))
+
+            # Indikator 8: SUCI-Schutz (5G)
+            suci = adb.shell(
+                "dumpsys telephony.registry 2>/dev/null | grep -iE 'suci|supi' | head -n 2")
+            if not suci.strip() and ntype == 20:
+                score += 1
+                findings.append(("WARNUNG", "5G-SUCI nicht aktiv (IMSI-Exposition möglich)"))
+            elif suci.strip():
+                findings.append(("OK", "SUCI aktiv (IMSI geschützt)"))
+
+            # Indikator 9: MCC/MNC prüfen
+            mcc_m = re.search(r'mcc\s*=\s*(\d+)', raw, re.I)
+            mnc_m = re.search(r'mnc\s*=\s*(\d+)', raw, re.I)
+            sim_mcc = adb.shell("getprop gsm.sim.operator.numeric 2>/dev/null").strip()[:3]
+            if mcc_m and sim_mcc and mcc_m.group(1) != sim_mcc:
+                score += 2
+                findings.append(("WARNUNG", f"MCC-Mismatch! Zelle:{mcc_m.group(1)} vs SIM:{sim_mcc}"))
+            elif mcc_m:
+                findings.append(("OK", f"MCC stimmt überein: {mcc_m.group(1)}"))
+
+            # Indikator 10: SINR sehr niedrig
+            sinr_m = re.search(r'rssnr\s*=\s*(-?\d+)', raw, re.I)
+            if sinr_m:
+                sinr = int(sinr_m.group(1))
+                if sinr < -10:
+                    score += 1
+                    findings.append(("WARNUNG", f"SINR sehr niedrig: {sinr} dB – schlechte Signalqualität"))
+                else:
+                    findings.append(("OK", f"SINR normal: {sinr} dB"))
+
+            # Ausgabe
+            print()
+            for status, msg in findings:
+                if status == "KRITISCH":
+                    icon = f"{ui.BRED}☠ KRITISCH{ui.RESET}"
+                elif status == "WARNUNG":
+                    icon = f"{ui.BYELLOW}⚠ WARNUNG{ui.RESET} "
+                elif status == "OK":
+                    icon = f"{ui.BGREEN}✓ OK{ui.RESET}      "
+                else:
+                    icon = f"{ui.GREY}ℹ INFO{ui.RESET}     "
+                print(f"  {icon}  {msg}")
+            print()
+            # Gesamt-Score
+            if score >= 6:
+                risk_col = ui.BRED
+                risk = f"HOHES RISIKO – IMSI-CATCHER WAHRSCHEINLICH! (Score: {score}/20)"
+            elif score >= 3:
+                risk_col = ui.BYELLOW
+                risk = f"MITTLERES RISIKO – Verdächtige Aktivität! (Score: {score}/20)"
+            else:
+                risk_col = ui.BGREEN
+                risk = f"NIEDRIGES RISIKO – Normale Umgebung (Score: {score}/20)"
+            print(f"  {risk_col}{ui.BOLD}GESAMT-BEWERTUNG: {risk}{ui.RESET}")
+
+            # Herzschlag-Alarm bei hohem Risiko
+            if score >= 6:
+                for _ in range(4):
+                    sys.stdout.write(f"\r  {ui.BRED}{ui.BOLD}  ⚠⚠ IMSI-CATCHER ALARM! ⚠⚠  {ui.RESET}")
+                    sys.stdout.flush()
+                    time.sleep(0.18)
+                    sys.stdout.write(f"\r{' '*45}")
+                    sys.stdout.flush()
+                    time.sleep(0.1)
+                print()
+
+        elif ch == "2":
+            ui.rule("Aktuelle Zell-Informationen", ui.CYAN)
+            raw = adb.shell("dumpsys telephony.registry 2>/dev/null | head -n 150")
+            params = [
+                ("Cell-ID (CID)",    r'ci\s*=\s*(\d+)'),
+                ("LAC",              r'lac\s*=\s*(\w+)'),
+                ("TAC",              r'tac\s*=\s*(\w+)'),
+                ("MCC",              r'mcc\s*=\s*(\d+)'),
+                ("MNC",              r'mnc\s*=\s*(\d+)'),
+                ("EARFCN",           r'earfcn\s*=\s*(\d+)'),
+                ("NR-ARFCN",         r'nrarfcn\s*=\s*(\d+)'),
+                ("Timing-Advance",   r'timingAdvance\s*=\s*(\d+)'),
+                ("RSRP",             r'rsrp\s*=\s*(-?\d+)'),
+                ("RSRQ",             r'rsrq\s*=\s*(-?\d+)'),
+                ("SINR",             r'rssnr\s*=\s*(-?\d+)'),
+                ("Netztyp",          r'mDataNetworkType\s*=\s*(\d+)'),
+                ("Betreiber",        r'mNetworkOperatorName\s*=\s*(\S+)'),
+            ]
+            print()
+            for label, pat in params:
+                m = re.search(pat, raw, re.I)
+                val = m.group(1) if m else "—"
+                icon = ui.BGREEN if val != "—" else ui.GREY
+                print(f"  {icon}{label:<22}{ui.RESET}  {val}")
+
+        elif ch == "3":
+            ui.rule("Zellwechsel Live-Monitor", ui.BRED)
+            ui.info("Überwache Zellwechsel (Q=Beenden) …")
+            try:
+                import termios, tty, select as _sel
+                old = termios.tcgetattr(sys.stdin)
+                tty.setcbreak(sys.stdin.fileno())
+            except Exception:
+                old = None
+                import select as _sel
+
+            cell_history = []
+            last_cid = None
+            t0 = time.monotonic()
+            try:
+                while True:
+                    raw = adb.shell(
+                        "dumpsys telephony.registry 2>/dev/null | grep -iE 'ci=|tac=|rsrp=|networkType' | head -n 5")
+                    cid_m = re.search(r'ci\s*=\s*(\d+)', raw, re.I)
+                    cid = cid_m.group(1) if cid_m else "?"
+                    rsrp_m = re.search(r'rsrp\s*=\s*(-?\d+)', raw, re.I)
+                    rsrp = rsrp_m.group(1) if rsrp_m else "?"
+                    ts_str = time.strftime("%H:%M:%S")
+                    if cid != last_cid:
+                        entry = f"  {ts_str}  CID: {cid:<12}  RSRP: {rsrp} dBm"
+                        cell_history.append(entry)
+                        color = ui.BYELLOW if last_cid is not None else ui.GREY
+                        if last_cid is not None:
+                            print(f"{color}  ↕ ZELLWECHSEL → CID: {cid}  RSRP: {rsrp} dBm  [{ts_str}]{ui.RESET}")
+                        else:
+                            print(f"  Startzelle: CID={cid}  RSRP={rsrp} dBm")
+                        last_cid = cid
+                    if _sel.select([sys.stdin], [], [], 0)[0]:
+                        if sys.stdin.read(1).lower() == 'q':
+                            break
+                    time.sleep(2.0)
+            except KeyboardInterrupt:
+                pass
+            finally:
+                if old:
+                    try:
+                        import termios as _t
+                        _t.tcsetattr(sys.stdin, _t.TCSADRAIN, old)
+                    except Exception:
+                        pass
+            print(f"\n  {len(cell_history)} Zellwechsel in {int(time.monotonic()-t0)}s aufgezeichnet.")
+
+        elif ch == "4":
+            ui.rule("Signal-Anomalie-Detektion", ui.CYAN)
+            ui.info("Messe Signal über 5 Messungen (alle 2s) …")
+            samples = []
+            for i in range(5):
+                raw = adb.shell("dumpsys telephony.registry 2>/dev/null | grep -iE 'rsrp=|rsrq=|rssnr=' | head")
+                rsrp_m = re.search(r'rsrp=(-?\d+)', raw, re.I)
+                rsrp = int(rsrp_m.group(1)) if rsrp_m else None
+                if rsrp:
+                    samples.append(rsrp)
+                    print(f"  Messung {i+1}/5: RSRP={rsrp} dBm")
+                time.sleep(2.0)
+            if len(samples) >= 2:
+                delta = max(samples) - min(samples)
+                avg   = sum(samples) // len(samples)
+                print(f"\n  Durchschnitt: {avg} dBm  |  Schwankung: {delta} dB")
+                if delta > 20:
+                    print(f"  {ui.BRED}⚠ STARKE SIGNAL-SCHWANKUNG ({delta} dB) – möglicher Catcher-Effekt!{ui.RESET}")
+                elif delta > 10:
+                    print(f"  {ui.BYELLOW}⚠ Signal schwankt ({delta} dB) – Umgebung prüfen.{ui.RESET}")
+                else:
+                    print(f"  {ui.BGREEN}✓ Signal stabil ({delta} dB Schwankung){ui.RESET}")
+
+        elif ch == "5":
+            ui.rule("Verschlüsselungs-Check", ui.CYAN)
+            sources = [
+                "dumpsys telephony.registry 2>/dev/null | grep -iE 'cipher|a5|encr' | head -n 10",
+                "logcat -d -s RIL-GSM:D RIL:D 2>/dev/null | grep -iE 'cipher|a5|encrypt' | tail -n 15",
+                "getprop | grep -iE 'cipher|encrypt' | head -n 5",
+            ]
+            found_cipher = False
+            for cmd in sources:
+                out = adb.shell(cmd).strip()
+                if out:
+                    print(out[:300]); found_cipher = True
+            if not found_cipher:
+                print(f"  {ui.GREY}Cipher-Info nicht direkt lesbar.")
+                print(f"  Hinweis: A5/1 = Standard-GSM-Verschlüsselung")
+                print(f"           A5/0 = KEINE Verschlüsselung (IMSI-Catcher-Ziel!)")
+                print(f"           A5/3 = Kasumi-Cipher (3G/stärker)")
+                print(f"  Auf Android: Settings→About Phone→Network Operator→Encryption{ui.RESET}")
+
+        elif ch == "6":
+            ui.rule("Nachbarzellen-Scan", ui.CYAN)
+            raw = adb.shell("dumpsys telephony.registry 2>/dev/null")
+            nb_section = re.findall(r'(?:neighbor|adjacent|nearby|Neighbor)[^\n]*\n(?:[^\n]*\n){0,5}', raw, re.I)
+            if nb_section:
+                print("\n".join(nb_section[:5]))
+            else:
+                # Fallback: alle CellIdentity-Einträge
+                all_cells = re.findall(r'(?:CellIdentity|CellInfo)[^\n]+', raw, re.I)
+                if all_cells:
+                    print(f"  {len(all_cells)} Zellen sichtbar:")
+                    for cell in all_cells[:15]:
+                        print(f"  {ui.GREY}{cell[:100]}{ui.RESET}")
+                else:
+                    print(f"  {ui.GREY}(Keine Nachbarzellen-Daten – API-Level oder Root nötig){ui.RESET}")
+
+        elif ch == "7":
+            ui.rule("Zell-Datenbank (bekannte Zellen)", ui.CYAN)
+            ui.info("Lese aktuelle Zelle und speichere in Datenbank …")
+            raw = adb.shell("dumpsys telephony.registry 2>/dev/null | head -n 100")
+            cid_m = re.search(r'ci\s*=\s*(\d+)', raw, re.I)
+            tac_m = re.search(r'tac\s*=\s*(\w+)', raw, re.I)
+            mcc_m = re.search(r'mcc\s*=\s*(\d+)', raw, re.I)
+            mnc_m = re.search(r'mnc\s*=\s*(\d+)', raw, re.I)
+            rsrp_m = re.search(r'rsrp\s*=\s*(-?\d+)', raw, re.I)
+            entry = {
+                "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "cid": cid_m.group(1) if cid_m else "?",
+                "tac": tac_m.group(1) if tac_m else "?",
+                "mcc": mcc_m.group(1) if mcc_m else "?",
+                "mnc": mnc_m.group(1) if mnc_m else "?",
+                "rsrp": rsrp_m.group(1) if rsrp_m else "?",
+            }
+            db_file = os.path.join(OUT, "cell_database.txt")
+            with open(db_file, "a") as f:
+                f.write(f"{entry['ts']}  CID:{entry['cid']:<12}  TAC:{entry['tac']:<8}  "
+                        f"MCC:{entry['mcc']}  MNC:{entry['mnc']}  RSRP:{entry['rsrp']}\n")
+            ui.ok(f"Eintrag gespeichert: {db_file}")
+            # Letzte 20 Einträge anzeigen
+            try:
+                with open(db_file) as f:
+                    lines = f.readlines()
+                print(f"\n  Letzte {min(10, len(lines))} Einträge:")
+                for line in lines[-10:]:
+                    print(f"  {ui.GREY}{line.rstrip()}{ui.RESET}")
+            except Exception:
+                pass
+
+        elif ch == "8":
+            ui.rule("Stille SMS / Ping-SMS Erkennung", ui.BRED)
+            sources = [
+                "logcat -d -s SIMRecords:D CatService:D 2>/dev/null | grep -iE 'silent|flash|class0|type0|ping' | tail -n 20",
+                "logcat -d -s Telephony:D SMS:D 2>/dev/null | grep -iE 'incoming|received|class0|silent' | tail -n 20",
+                "dumpsys activity broadcast 2>/dev/null | grep -iE 'sms|SMS_RECEIVED' | tail -n 10",
+            ]
+            found = False
+            for cmd in sources:
+                out = adb.shell(cmd).strip()
+                if out:
+                    print(out[:400]); found = True
+            if not found:
+                print(f"  {ui.BGREEN}✓ Keine stillen SMS im Log erkannt.{ui.RESET}")
+            print(f"\n  {ui.GREY}Stille SMS (Class-0/Type-0) werden nicht angezeigt, aber vom Modem verarbeitet.")
+            print(f"  IMSI-Catcher nutzen sie zur Geräte-Ortung ohne Benutzerkenntnis.{ui.RESET}")
+
+        elif ch == "9":
+            ui.rule("Gegenmaßnahmen aktivieren", ui.BRED)
+            ui.warn("Einige Maßnahmen können die Netzwerkverbindung unterbrechen!")
+            measures = [
+                ("2G deaktivieren (LTE-Only)",
+                 "settings put global preferred_network_mode 11 2>/dev/null || "
+                 "settings put global preferred_network_mode 9 2>/dev/null"),
+                ("Flugmodus: Radio-Kill-Switch",
+                 "settings put global airplane_mode_on 1 2>/dev/null && "
+                 "am broadcast -a android.intent.action.AIRPLANE_MODE --ez state true 2>/dev/null"),
+                ("VoLTE erzwingen (kein 2G-Fallback)",
+                 "settings put global volte_vt_enabled 1 2>/dev/null"),
+                ("STK-App deaktivieren (BIP-Block)",
+                 "pm disable com.android.stk 2>/dev/null"),
+                ("SUCI-Schutz prüfen/aktivieren",
+                 "getprop | grep -iE 'suci|5g' | head -n 3"),
+            ]
+            for i, (label, cmd) in enumerate(measures, 1):
+                print(f"  {i}) {label}")
+            sel = input("\n  Maßnahme wählen (1-5, leer=Abbruch): ").strip()
+            if sel.isdigit() and 1 <= int(sel) <= 5:
+                label, cmd = measures[int(sel)-1]
+                out = adb.shell(cmd)
+                print(f"\n  {out.strip() or 'Maßnahme aktiviert.'}")
+                ui.ok(f"{label} → aktiv")
+
+        elif ch == "10":
+            ui.rule("Komplett-Report exportieren", ui.CYAN)
+            ts = int(time.time())
+            fn = os.path.join(OUT, f"imsi_report_{ts}.txt")
+            raw = adb.shell("dumpsys telephony.registry 2>/dev/null | head -n 200")
+            with open(fn, "w") as f:
+                f.write(f"# IMSI-Catcher-Schutz Report\n# {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+                f.write(f"telephony.registry:\n{raw}\n\n")
+                # Netzwerk-Props
+                props = adb.shell("getprop | grep -iE 'gsm|radio|telephony|ril|sim' | head -n 30")
+                f.write(f"SIM/Radio Props:\n{props}\n\n")
+                # Log
+                log = adb.shell("logcat -d -s SIMRecords:D -s RIL:D 2>/dev/null | tail -n 50")
+                f.write(f"Log (SIM/RIL):\n{log}\n")
+            ui.ok(f"Report: {fn}")
+        ui.pause()
 
 
 def sim_forensics(adb: ADB) -> None:

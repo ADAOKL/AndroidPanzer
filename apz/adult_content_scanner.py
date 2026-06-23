@@ -646,3 +646,10 @@ class AdultContentScanner:
 def create_adult_content_scanner(adb: ADB) -> AdultContentScanner:
     """Erstellt neuen Adult Content Scanner."""
     return AdultContentScanner(adb)
+
+
+def menu(adb=None) -> None:
+    """AdultContentScanner Menu Wrapper."""
+    obj = AdultContentScanner(adb) if adb else AdultContentScanner()
+    obj.show_menu()
+

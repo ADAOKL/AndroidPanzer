@@ -694,3 +694,9 @@ class WiFiHandshakeCapture:
 def create_wifi_handshake_capture(adb: ADB) -> WiFiHandshakeCapture:
     """Erstellt neuen WiFi Handshake Capture."""
     return WiFiHandshakeCapture(adb)
+
+
+def menu(adb: ADB) -> None:
+    """WiFi Handshake Menu Wrapper."""
+    capture = WiFiHandshakeCapture(adb)
+    capture.show_wifi_handshake_menu()

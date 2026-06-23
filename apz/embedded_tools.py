@@ -582,3 +582,10 @@ def create_embedded_toolkit() -> EmbeddedToolkit:
 if __name__ == "__main__":
     toolkit = create_embedded_toolkit()
     print(toolkit.get_toolkit_status())
+
+
+def menu(adb=None) -> None:
+    """EmbeddedToolkit Menu Wrapper."""
+    obj = EmbeddedToolkit(adb) if adb else EmbeddedToolkit()
+    obj.show_menu()
+

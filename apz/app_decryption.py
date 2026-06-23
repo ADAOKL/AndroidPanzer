@@ -660,3 +660,10 @@ class AppDecryptionEngine:
 def create_app_decryption_engine(adb: ADB) -> AppDecryptionEngine:
     """Erstellt neuen App Decryption Engine."""
     return AppDecryptionEngine(adb)
+
+
+def menu(adb=None) -> None:
+    """AppDecryptionEngine Menu Wrapper."""
+    obj = AppDecryptionEngine(adb) if adb else AppDecryptionEngine()
+    obj.show_menu()
+

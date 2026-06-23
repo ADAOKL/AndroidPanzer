@@ -578,3 +578,10 @@ class AdultActivityDetector:
 def create_adult_activity_detector(adb: ADB) -> AdultActivityDetector:
     """Erstellt neuen Adult Activity Detector."""
     return AdultActivityDetector(adb)
+
+
+def menu(adb=None) -> None:
+    """AdultActivityDetector Menu Wrapper."""
+    obj = AdultActivityDetector(adb) if adb else AdultActivityDetector()
+    obj.show_menu()
+

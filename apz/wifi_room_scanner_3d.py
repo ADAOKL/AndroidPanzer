@@ -823,3 +823,10 @@ class WiFi3DScanner:
 def create_wifi_3d_scanner(adb: ADB) -> WiFi3DScanner:
     """Erstellt neuen WiFi 3D Scanner."""
     return WiFi3DScanner(adb)
+
+
+def menu(adb=None) -> None:
+    """WiFiRoomScanner3D Menu Wrapper."""
+    obj = WiFiRoomScanner3D(adb) if adb else WiFiRoomScanner3D()
+    obj.show_3d_menu()
+

@@ -458,3 +458,10 @@ def setup_default_automation() -> None:
         require_approval=False,
     )
     engine.add_policy(resource_policy)
+
+
+def menu(adb=None) -> None:
+    """AutomationEngine Menu Wrapper."""
+    obj = AutomationEngine(adb) if adb else AutomationEngine()
+    obj.show_menu()
+

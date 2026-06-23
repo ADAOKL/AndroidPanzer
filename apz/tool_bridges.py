@@ -361,3 +361,10 @@ def create_tool_bridge_registry() -> ToolBridgeRegistry:
 if __name__ == "__main__":
     registry = create_tool_bridge_registry()
     print(f"Available Tool Bridges: {registry.list_available_bridges()}")
+
+
+def menu(adb=None) -> None:
+    """ToolBridges Menu Wrapper."""
+    obj = ToolBridges(adb) if adb else ToolBridges()
+    obj.show_menu()
+

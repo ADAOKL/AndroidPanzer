@@ -218,3 +218,10 @@ def run_feature_with_dashboard(dashboard: FeatureDashboard,
         dashboard.add_error(str(e))
         dashboard.render_complete()
         return False
+
+
+def menu(adb=None) -> None:
+    """MultiFeatureDashboard Menu Wrapper."""
+    obj = MultiFeatureDashboard(adb) if adb else MultiFeatureDashboard()
+    obj.show_dashboard()
+

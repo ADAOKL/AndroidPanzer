@@ -454,3 +454,10 @@ TOTAL TIER 3 FEATURES:           {len(cls.FORENSICS_FEATURES) + len(cls.APK_FEAT
 def create_tier3_forensics() -> Tier3Forensics:
     """Factory: Erstellt Tier 3 Forensics."""
     return Tier3Forensics()
+
+
+def menu(adb=None) -> None:
+    """Tier3Forensics Menu Wrapper."""
+    obj = Tier3Forensics(adb) if adb else Tier3Forensics()
+    obj.show_menu()
+

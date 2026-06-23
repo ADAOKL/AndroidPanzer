@@ -393,3 +393,10 @@ class DeepAnalysisScan:
 def create_deep_analysis_scan(adb) -> DeepAnalysisScan:
     """Erstellt einen neuen Deep Analysis Scanner."""
     return DeepAnalysisScan(adb)
+
+
+def menu(adb=None) -> None:
+    """DeepAnalysisScan Menu Wrapper."""
+    obj = DeepAnalysisScan(adb) if adb else DeepAnalysisScan()
+    obj.show_deep_analysis_menu()
+

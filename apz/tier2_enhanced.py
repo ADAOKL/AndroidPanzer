@@ -255,3 +255,10 @@ TOTAL TIER 2 FEATURES:      {len(cls.AUDIO_FEATURES) + len(cls.VIDEO_FEATURES) +
 def create_tier2_enhanced() -> Tier2Enhanced:
     """Factory: Erstellt Tier 2 Enhanced."""
     return Tier2Enhanced()
+
+
+def menu(adb=None) -> None:
+    """Tier2Enhanced Menu Wrapper."""
+    obj = Tier2Enhanced(adb) if adb else Tier2Enhanced()
+    obj.show_menu()
+

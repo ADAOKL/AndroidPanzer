@@ -35,12 +35,493 @@ def menu(adb=None, dev=None, st=None) -> None:
         ui.pause(); return
     while True:
         ui.clear()
-        ui.banner(subtitle="📞 Handynummer-Analyse (OSINT)")
-        ui.info("Nummer im Format +49170… (international, mit Ländercode) eingeben.\n")
-        num = ui.ask("Telefonnummer (oder 'q')")
-        if not num or num.lower() in ("q", "quit", "0", "back"):
+        ui.banner(subtitle="📞 Telefon-OSINT & Nummer-Analyse")
+        ch = ui.menu("Aktion", [
+            ("1",  "🔍 Nummer analysieren      (Format, Land, Carrier, Messenger, OSINT-Links)"),
+            ("2",  "📦 Mehrere Nummern         (Batch-Analyse, Liste einlesen)"),
+            ("3",  "📶 Carrier-Vollsuche        (Netz-Identifikation, Portierung, VoIP-Check)"),
+            ("4",  "⚠  Spam-Score              (Tellows, CleverDialer, WerruftAn)"),
+            ("5",  "🌐 Social-Media Suche       (Facebook, Instagram, Telegram, TikTok)"),
+            ("6",  "✉  E-Mail-Permutationen     (Mögliche Adressen aus Name/Nummer generieren)"),
+            ("7",  "🔓 Breach-Check Anleitung   (HaveIBeenPwned, LeakCheck, Dehashed)"),
+            ("8",  "🕵 CallerID-Datenbanken     (Truecaller, Sync.me, Reverse-Lookup)"),
+            ("9",  "📍 Carrier-Standort         (MCC/MNC → Netz, Land, Region)"),
+            ("10", "🤖 KI-Rechercheplan          (Ollama – strukturierter OSINT-Plan)"),
+            ("11", "💾 Report exportieren        (TXT-Datei aller gesammelten Daten)"),
+        ], back_label="Zurück")
+        if ch in ("back", "quit"):
             return
-        analyze(num)
+        if ch == "1":
+            num = ui.ask("Telefonnummer (+49170…) oder 'q'")
+            if num and num.lower() not in ("q", "quit", ""):
+                analyze(num)
+        elif ch == "2":
+            _batch_analyze()
+        elif ch == "3":
+            num = ui.ask("Telefonnummer (+49170…)")
+            if num and num.strip():
+                _carrier_deep(num.strip())
+        elif ch == "4":
+            num = ui.ask("Telefonnummer (+49170…)")
+            if num and num.strip():
+                _spam_check(num.strip())
+        elif ch == "5":
+            num = ui.ask("Telefonnummer (+49170…)")
+            if num and num.strip():
+                _social_deep(num.strip())
+        elif ch == "6":
+            _email_permutations()
+        elif ch == "7":
+            _breach_guide()
+        elif ch == "8":
+            num = ui.ask("Telefonnummer (+49170…)")
+            if num and num.strip():
+                _callerid_lookup(num.strip())
+        elif ch == "9":
+            _carrier_location(adb)
+        elif ch == "10":
+            num = ui.ask("Telefonnummer (+49170…)")
+            if num and num.strip():
+                _run_ai_plan(num.strip())
+        elif ch == "11":
+            num = ui.ask("Telefonnummer für Export (+49170…)")
+            if num and num.strip():
+                _full_export(num.strip())
+
+
+def _batch_analyze() -> None:
+    """Mehrere Nummern auf einmal analysieren."""
+    ui.clear()
+    ui.rule("📦 BATCH-ANALYSE", ui.BCYAN)
+    print(f"\n  {ui.GREY}Nummern kommasepariert oder eine pro Zeile (leer = Ende):{ui.RESET}\n")
+    nums = []
+    raw = ui.ask("Nummern (kommasepariert) oder Pfad zur .txt-Datei")
+    if not raw:
+        return
+    import os
+    if os.path.isfile(raw.strip()):
+        with open(raw.strip(), encoding="utf-8", errors="replace") as f:
+            lines = f.read().splitlines()
+        nums = [l.strip() for l in lines if l.strip() and not l.startswith("#")]
+    else:
+        nums = [n.strip() for n in raw.replace("\n", ",").split(",") if n.strip()]
+    if not nums:
+        ui.err("Keine Nummern erkannt."); ui.pause(); return
+    ui.info(f"{len(nums)} Nummern gefunden. Analyse startet…\n")
+    results = []
+    for num in nums[:50]:
+        try:
+            n = phonenumbers.parse(num, "DE" if not num.startswith("+") else None)
+            valid = phonenumbers.is_valid_number(n)
+            e164 = phonenumbers.format_number(n, phonenumbers.PhoneNumberFormat.E164)
+            country = _country_name(n)
+            car = carrier.name_for_number(n, "de") or "?"
+            ltype = _line_type(n)
+            line = f"{e164:20s} | {'✓' if valid else '✗'} | {country:20s} | {car:15s} | {ltype}"
+            print(f"  {line}")
+            results.append(line)
+        except Exception as e:
+            line = f"{num:20s} | ERROR: {e}"
+            print(f"  {ui.BRED}{line}{ui.RESET}")
+            results.append(line)
+    if results and ui.confirm("Ergebnisse speichern?", True):
+        import time as _time
+        out = os.path.expanduser(f"~/Schreibtisch/Androidpanzer/phone_osint/batch_{_time.strftime('%Y%m%d_%H%M%S')}.txt")
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        with open(out, "w", encoding="utf-8") as f:
+            f.write("Nummer               | Gültig | Land                 | Carrier         | Typ\n")
+            f.write("-" * 80 + "\n")
+            f.write("\n".join(results) + "\n")
+        ui.ok(f"Gespeichert: {out}")
+    ui.pause()
+
+
+def _carrier_deep(raw: str) -> None:
+    """Carrier-Vollsuche – Netzidentifikation, VoIP-Check, Portierungs-Hinweis."""
+    ui.clear()
+    ui.rule("📶 CARRIER-VOLLSUCHE", ui.BCYAN)
+    try:
+        n = phonenumbers.parse(raw, "DE" if not raw.startswith("+") else None)
+    except Exception as e:
+        ui.err(f"Parse-Fehler: {e}"); ui.pause(); return
+    e164 = phonenumbers.format_number(n, phonenumbers.PhoneNumberFormat.E164)
+    intl = phonenumbers.format_number(n, phonenumbers.PhoneNumberFormat.INTERNATIONAL)
+    print(f"\n  Nummer: {ui.BOLD}{intl}{ui.RESET}\n")
+    # Carrier-Infos
+    car_de = carrier.name_for_number(n, "de")
+    car_en = carrier.name_for_number(n, "en")
+    tzs = timezone.time_zones_for_number(n)
+    ltype = _line_type(n)
+    region = geocoder.description_for_number(n, "de")
+    ui.kv("Carrier (DE)", car_de or "— (bei portierten Nummern oft leer)")
+    ui.kv("Carrier (EN)", car_en or "—")
+    ui.kv("Leitungstyp", ltype)
+    ui.kv("Region",      region or "—")
+    ui.kv("Zeitzonen",   ", ".join(tzs) or "—")
+    print()
+    # VoIP-Einschätzung
+    t = phonenumbers.number_type(n)
+    if t == phonenumbers.PhoneNumberType.VOIP:
+        ui.warn("VoIP-Nummer erkannt (Dienst wie Skype/Google Voice/Twilio)")
+    elif t == phonenumbers.PhoneNumberType.MOBILE:
+        ui.ok("Mobilfunk-Nummer")
+    elif t == phonenumbers.PhoneNumberType.FIXED_LINE:
+        ui.info("Festnetz-Nummer")
+    elif t == phonenumbers.PhoneNumberType.PREMIUM_RATE:
+        ui.warn("Premium-Nummer (kostenpflichtig!)")
+    # Portierung
+    print(f"\n  {ui.BOLD}Portierungs-Prüfung:{ui.RESET}")
+    print(f"  {ui.GREY}Carrier-Datenbanken zeigen den ORIGINAL-Carrier – bei portierten Nummern")
+    print(f"  weicht der angezeigte Carrier vom echten Anbieter ab.")
+    print(f"  Prüfung über: https://www.bundesnetzagentur.de/portierungsabfrage{ui.RESET}")
+    # Rufnummernplan-Check
+    rc = phonenumbers.region_code_for_number(n)
+    print(f"\n  {ui.BOLD}Rufnummernplan:{ui.RESET}")
+    print(f"  {ui.GREY}Region-Code: {rc}")
+    print(f"  E.164: {e164}")
+    print(f"  Gültig: {'✓' if phonenumbers.is_valid_number(n) else '✗'}{ui.RESET}")
+    ui.pause()
+
+
+def _spam_check(raw: str) -> None:
+    """Spam-Score – alle Community-Datenbanken."""
+    ui.clear()
+    ui.rule("⚠  SPAM / SCAM SCORE", ui.BYELLOW)
+    try:
+        n = phonenumbers.parse(raw, "DE" if not raw.startswith("+") else None)
+        natl = phonenumbers.format_number(n, phonenumbers.PhoneNumberFormat.NATIONAL)
+        e164 = phonenumbers.format_number(n, phonenumbers.PhoneNumberFormat.E164)
+        intl = phonenumbers.format_number(n, phonenumbers.PhoneNumberFormat.INTERNATIONAL)
+    except Exception:
+        natl = raw; e164 = raw; intl = raw
+    natl_clean = natl.replace(" ", "").replace("/", "").replace("-", "")
+    digits = e164.lstrip("+")
+    print(f"\n  Nummer: {ui.BOLD}{intl}{ui.RESET}\n")
+    sources = [
+        ("tellows (DE, Score 1-9)", f"https://www.tellows.de/num/{urllib.parse.quote(natl_clean)}"),
+        ("clever-dialer",           f"https://www.cleverdialer.de/telefonnummer/{urllib.parse.quote(natl_clean)}"),
+        ("WerruftAn",               f"https://www.werruftan.com/Phonenumber-{urllib.parse.quote(natl_clean)}"),
+        ("Should I Answer",         f"https://www.shouldianswer.com/phone-number/{urllib.parse.quote(natl_clean)}"),
+        ("Truecaller",              f"https://www.truecaller.com/search/de/{urllib.parse.quote(natl_clean)}"),
+        ("Mr. Number (US)",         f"https://mrnumber.com/{urllib.parse.quote(digits)}"),
+        ("800Notes",                f"https://800notes.com/Phone.aspx/{urllib.parse.quote(natl_clean)}"),
+        ("NumLookup",               f"https://numlookup.com/search?phone={urllib.parse.quote(e164)}"),
+        ("Reverse Phone Check",     f"https://www.reversephonecheck.com/{urllib.parse.quote(digits)}"),
+        ("Sync.me",                 f"https://sync.me/search/?number={urllib.parse.quote(digits)}"),
+    ]
+    for label, url in sources:
+        print(f"  {ui.BCYAN}▸{ui.RESET} {label:30s} {ui.GREY}{url}{ui.RESET}")
+    ui.pause()
+
+
+def _social_deep(raw: str) -> None:
+    """Social-Media Tiefensuche – plattformspezifische Dorks."""
+    ui.clear()
+    ui.rule("🌐 SOCIAL-MEDIA TIEFENSUCHE", ui.BCYAN)
+    try:
+        n = phonenumbers.parse(raw, "DE" if not raw.startswith("+") else None)
+        e164 = phonenumbers.format_number(n, phonenumbers.PhoneNumberFormat.E164)
+        natl = phonenumbers.format_number(n, phonenumbers.PhoneNumberFormat.NATIONAL)
+        intl = phonenumbers.format_number(n, phonenumbers.PhoneNumberFormat.INTERNATIONAL)
+    except Exception:
+        e164 = raw; natl = raw; intl = raw
+    natl_clean = natl.replace(" ", "").replace("/", "").replace("-", "")
+    digits = e164.lstrip("+")
+    q = urllib.parse.quote
+    forms = f'"{e164}" OR "{natl}" OR "{natl_clean}"'
+    g = "https://www.google.com/search?q="
+    print(f"\n  Nummer: {ui.BOLD}{intl}{ui.RESET}\n")
+    sections = {
+        "Direkt-Links (Messenger)": [
+            ("WhatsApp",       f"https://wa.me/{digits}"),
+            ("Telegram",       f"https://t.me/+{digits}"),
+            ("Signal",         f"signal: Kontakt hinzufügen → {e164}"),
+            ("Viber",          f"viber://chat?number={q(e164)}"),
+        ],
+        "Google-Dorks": [
+            ("Facebook",       g + q(f"{forms} site:facebook.com")),
+            ("Instagram",      g + q(f"{forms} site:instagram.com")),
+            ("Twitter/X",      g + q(f"{forms} (site:x.com OR site:twitter.com)")),
+            ("LinkedIn",       g + q(f"{forms} site:linkedin.com")),
+            ("TikTok",         g + q(f"{forms} site:tiktok.com")),
+            ("YouTube",        g + q(f"{forms} site:youtube.com")),
+            ("Telegram-Gruppen", g + q(f"{forms} (site:t.me OR telegram group)")),
+            ("Reddit",         g + q(f"{forms} site:reddit.com")),
+            ("Kleinanzeigen",  g + q(f"{forms} (ebay-kleinanzeigen OR kleinanzeigen OR marktplatz)")),
+        ],
+        "Konto-Recovery (manuell prüfen)": [
+            ("Facebook",       "https://www.facebook.com/login/identify/"),
+            ("Instagram",      "https://www.instagram.com/accounts/password/reset/"),
+            ("Twitter/X",      "https://x.com/account/begin_password_reset"),
+            ("Google",         "https://accounts.google.com/signin/recovery"),
+            ("Snapchat",       "https://accounts.snapchat.com/accounts/password_reset_request"),
+        ],
+        "Aggregatoren": [
+            ("Epieos (Phone→Konten)", f"https://epieos.com/?q={q(e164)}&t=phone"),
+            ("OSINT Industries",      f"https://osint.industries/ (Phone: {e164})"),
+            ("PhoneInfoga (lokal)",   "python3 -m phoneinfoga scan -n " + e164),
+        ],
+    }
+    for section, links in sections.items():
+        ui.rule(section, ui.GREY)
+        for label, url in links:
+            print(f"  {ui.BCYAN}▸{ui.RESET} {label:28s} {ui.GREY}{url}{ui.RESET}")
+    ui.pause()
+
+
+def _email_permutations() -> None:
+    """E-Mail-Permutationen aus Name + Domain generieren."""
+    ui.clear()
+    ui.rule("✉  E-MAIL PERMUTATIONEN", ui.BCYAN)
+    print(f"\n  {ui.GREY}Generiert mögliche E-Mail-Adressen aus Vor-/Nachname{ui.RESET}\n")
+    first = ui.ask("Vorname").strip().lower()
+    last = ui.ask("Nachname").strip().lower()
+    domain = ui.ask("Domain (z.B. gmail.com, web.de)").strip().lower()
+    if not first or not last or not domain:
+        ui.err("Alle Felder erforderlich."); ui.pause(); return
+    f, l = first, last
+    fi, li = f[0], l[0]
+    permutations = [
+        f"{f}.{l}@{domain}",
+        f"{f}{l}@{domain}",
+        f"{fi}{l}@{domain}",
+        f"{f}{li}@{domain}",
+        f"{f}.{li}@{domain}",
+        f"{fi}.{l}@{domain}",
+        f"{l}.{f}@{domain}",
+        f"{l}{f}@{domain}",
+        f"{l}{fi}@{domain}",
+        f"{f}_{l}@{domain}",
+        f"{l}_{f}@{domain}",
+        f"{fi}_{l}@{domain}",
+    ]
+    print(f"\n  {ui.BOLD}Mögliche E-Mail-Adressen für {first.title()} {last.title()} @ {domain}:{ui.RESET}\n")
+    q = urllib.parse.quote
+    for mail in permutations:
+        g_url = f"https://www.google.com/search?q={q(chr(34) + mail + chr(34))}"
+        print(f"  {ui.BGREEN}{mail:35s}{ui.RESET} → {ui.GREY}{g_url}{ui.RESET}")
+    print()
+    print(f"  {ui.BOLD}Breach-Check (alle auf einmal):{ui.RESET}")
+    print(f"  {ui.GREY}HaveIBeenPwned API: https://haveibeenpwned.com/API/v3")
+    print(f"  Hunter.io Verify: https://api.hunter.io/v2/email-verifier?email=<mail>&api_key=...")
+    print(f"  Skript: for mail in {' '.join(permutations[:3])} ...; do curl hibp; done{ui.RESET}")
+    ui.pause()
+
+
+def _breach_guide() -> None:
+    """Breach-Check Anleitung – HaveIBeenPwned, Dehashed, LeakCheck."""
+    ui.clear()
+    ui.rule("🔓 BREACH-CHECK ANLEITUNG", ui.BYELLOW)
+    print(f"""
+  {ui.BOLD}HaveIBeenPwned (HIBP) – kostenlos für E-Mail:{ui.RESET}
+  {ui.GREY}Web: https://haveibeenpwned.com/
+  API: curl -H "hibp-api-key: <KEY>" https://haveibeenpwned.com/api/v3/breachedaccount/<email>
+  Passwort-Check: https://haveibeenpwned.com/Passwords  (SHA1-Präfix-Methode){ui.RESET}
+
+  {ui.BOLD}Dehashed – kostenpflichtig (Telefon + E-Mail):{ui.RESET}
+  {ui.GREY}https://dehashed.com/
+  API: curl -H "Dehashed-Api-Key: <KEY>" "https://api.dehashed.com/search?query=phone:<NUMMER>"
+  Sucht in Datenlecks nach Telefonnummer → E-Mail, Name, Passwort-Hash{ui.RESET}
+
+  {ui.BOLD}LeakCheck – Telefon-Datenbanken:{ui.RESET}
+  {ui.GREY}https://leakcheck.io/
+  API: POST /api/v2/query  body: {"query": "+49170...", "type": "phone"}{ui.RESET}
+
+  {ui.BOLD}IntelX (Intelligence X):{ui.RESET}
+  {ui.GREY}https://intelx.io/ – Darkweb + Pastes + Breaches
+  Sucht Telefon, E-Mail, IP, BTC-Adresse{ui.RESET}
+
+  {ui.BOLD}Snusbase:{ui.RESET}
+  {ui.GREY}https://snusbase.com/ – Breached DB Search{ui.RESET}
+
+  {ui.BOLD}OSINT Framework (Übersicht aller Tools):{ui.RESET}
+  {ui.GREY}https://osintframework.com/ → Phone Number → alle verlinkten Tools{ui.RESET}
+
+  {ui.BOLD}CLI-Tool: holehe (E-Mail → Konten):{ui.RESET}
+  {ui.GREY}pip install holehe
+  holehe <email@domain.de>    # prüft 120+ Dienste{ui.RESET}
+
+  {ui.BOLD}CLI-Tool: phoneinfoga:{ui.RESET}
+  {ui.GREY}https://github.com/sundowndev/phoneinfoga
+  phoneinfoga scan -n +49170XXXXXXX{ui.RESET}
+""")
+    ui.pause()
+
+
+def _callerid_lookup(raw: str) -> None:
+    """CallerID-Datenbanken – Truecaller, Sync.me, Reverse-Lookup."""
+    ui.clear()
+    ui.rule("🕵 CALLERID DATENBANKEN", ui.BCYAN)
+    try:
+        n = phonenumbers.parse(raw, "DE" if not raw.startswith("+") else None)
+        e164 = phonenumbers.format_number(n, phonenumbers.PhoneNumberFormat.E164)
+        natl = phonenumbers.format_number(n, phonenumbers.PhoneNumberFormat.NATIONAL)
+        intl = phonenumbers.format_number(n, phonenumbers.PhoneNumberFormat.INTERNATIONAL)
+    except Exception:
+        e164 = raw; natl = raw; intl = raw
+    natl_clean = natl.replace(" ", "").replace("/", "").replace("-", "")
+    digits = e164.lstrip("+")
+    q = urllib.parse.quote
+    print(f"\n  Nummer: {ui.BOLD}{intl}{ui.RESET}\n")
+    sources = [
+        ("Truecaller (Account nötig)", f"https://www.truecaller.com/search/de/{q(natl_clean)}"),
+        ("Sync.me",                   f"https://sync.me/search/?number={q(digits)}"),
+        ("Das Örtliche (DE Rückwärtssuche)", f"https://www.dasoertliche.de/rueckwaertssuche/?ph={q(natl_clean)}"),
+        ("Telefonbuch.de",            f"https://www.telefonbuch.de/r?n={q(natl_clean)}"),
+        ("Das Telefonbuch",           f"https://www.dastelefonbuch.de/?kw={q(natl_clean)}&cmd=suche"),
+        ("Anrufmonitor (DE)",         f"https://www.anrufmonitor.de/{q(natl_clean)}"),
+        ("NumLookup (INT)",           f"https://numlookup.com/search?phone={q(e164)}"),
+        ("SpamCalls",                 f"https://spamcalls.net/de/search?num={q(natl_clean)}"),
+        ("PhoneInfoga (lokal)",       f"python3 -m phoneinfoga scan -n {e164}"),
+        ("Opencnam (API, US)",        f"https://api.opencnam.com/v3/phone/{q(digits)}"),
+    ]
+    print(f"  {ui.BOLD}CallerID-Quellen:{ui.RESET}\n")
+    for label, url in sources:
+        print(f"  {ui.BCYAN}▸{ui.RESET} {label:35s} {ui.GREY}{url}{ui.RESET}")
+    print()
+    print(f"  {ui.BOLD}Hinweis:{ui.RESET}")
+    print(f"  {ui.GREY}Truecaller zeigt am meisten – aber Konto + Einverständnis erforderlich.")
+    print(f"  PhoneInfoga (lokal): pip install phoneinfoga{ui.RESET}")
+    ui.pause()
+
+
+def _carrier_location(adb) -> None:
+    """Carrier-Standort aus MCC/MNC ermitteln."""
+    ui.clear()
+    ui.rule("📍 CARRIER-STANDORT (MCC/MNC)", ui.BCYAN)
+    print()
+    # Gerätedaten wenn ADB verfügbar
+    mcc_mnc = ""
+    if adb:
+        try:
+            op = adb.shell("getprop gsm.operator.numeric 2>/dev/null").strip()
+            if op:
+                mcc_mnc = op
+                mcc, mnc = op[:3], op[3:]
+                ui.kv("MCC/MNC vom Gerät", f"{mcc_mnc} (MCC={mcc}, MNC={mnc})")
+        except Exception:
+            pass
+    # MCC/MNC Datenbank (Ausschnitt)
+    _MCC = {
+        "262": "Deutschland", "232": "Österreich", "228": "Schweiz",
+        "310": "USA", "234": "Großbritannien", "208": "Frankreich",
+        "222": "Italien", "214": "Spanien", "204": "Niederlande",
+        "260": "Polen", "286": "Türkei", "250": "Russland",
+        "505": "Australien", "440": "Japan", "460": "China",
+    }
+    _MNC_DE = {
+        "01": "T-Mobile/Telekom", "02": "Vodafone", "03": "E-Plus (ehem.)",
+        "07": "O2/Telefónica", "06": "T-Mobile", "09": "Vodafone",
+        "20": "Telekom (Virtuell)", "77": "E-Plus (1&1)",
+    }
+    if mcc_mnc:
+        mcc, mnc = mcc_mnc[:3], mcc_mnc[3:]
+        land = _MCC.get(mcc, "Unbekannt")
+        netz = _MNC_DE.get(mnc, "Unbekannt") if mcc == "262" else "Netz aus MNC-DB"
+        ui.kv("Land",    land)
+        ui.kv("Netz",    netz)
+    else:
+        mcc_mnc = ui.ask("MCC+MNC manuell eingeben (z.B. 26202 für Vodafone DE)")
+        if mcc_mnc and len(mcc_mnc) >= 5:
+            mcc, mnc = mcc_mnc[:3], mcc_mnc[3:]
+            land = _MCC.get(mcc, "?")
+            netz = _MNC_DE.get(mnc, "?") if mcc == "262" else "?"
+            ui.kv("Land", land)
+            ui.kv("Netz", netz)
+    print(f"\n  {ui.BOLD}Vollständige MCC/MNC-Datenbank:{ui.RESET}")
+    print(f"  {ui.GREY}https://www.mcc-mnc.com/")
+    print(f"  https://www.mobilefish.com/services/mobile_country_code/mobile_country_code.php{ui.RESET}")
+    ui.pause()
+
+
+def _run_ai_plan(raw: str) -> None:
+    """KI-Rechercheplan für Telefonnummer via Ollama."""
+    try:
+        n = phonenumbers.parse(raw, "DE" if not raw.startswith("+") else None)
+        e164 = phonenumbers.format_number(n, phonenumbers.PhoneNumberFormat.E164)
+        country = _country_name(n)
+        car = carrier.name_for_number(n, "de") or "?"
+        ltype = _line_type(n)
+    except Exception:
+        e164 = raw; country = "?"; car = "?"; ltype = "?"
+    _ai_plan(e164, raw, country, car, ltype)
+
+
+def _full_export(raw: str) -> None:
+    """Vollständiger Export aller OSINT-Daten als TXT."""
+    import os, time as _time
+    ui.clear()
+    try:
+        n = phonenumbers.parse(raw, "DE" if not raw.startswith("+") else None)
+        valid = phonenumbers.is_valid_number(n)
+        e164 = phonenumbers.format_number(n, phonenumbers.PhoneNumberFormat.E164)
+        intl = phonenumbers.format_number(n, phonenumbers.PhoneNumberFormat.INTERNATIONAL)
+        natl = phonenumbers.format_number(n, phonenumbers.PhoneNumberFormat.NATIONAL)
+        country = _country_name(n)
+        car = carrier.name_for_number(n, "de") or "—"
+        ltype = _line_type(n)
+        tzs = timezone.time_zones_for_number(n)
+        region = geocoder.description_for_number(n, "de") or "—"
+    except Exception as e:
+        ui.err(f"Parse-Fehler: {e}"); ui.pause(); return
+
+    digits = e164.lstrip("+")
+    natl_clean = natl.replace(" ", "").replace("/", "").replace("-", "")
+    q = urllib.parse.quote
+    ts = _time.strftime("%Y-%m-%d %H:%M:%S")
+
+    lines = [
+        f"# TELEFON-OSINT REPORT",
+        f"# Erstellt: {ts}",
+        f"# Nummer: {intl}",
+        "",
+        "## BASIS-INFORMATIONEN",
+        f"Gültig:       {'✓' if valid else '✗'}",
+        f"E.164:        {e164}",
+        f"International:{intl}",
+        f"National:     {natl}",
+        f"Land:         {country}",
+        f"Region:       {region}",
+        f"Carrier:      {car}",
+        f"Typ:          {ltype}",
+        f"Zeitzonen:    {', '.join(tzs)}",
+        "",
+        "## MESSENGER",
+        f"WhatsApp:  https://wa.me/{digits}",
+        f"Telegram:  https://t.me/+{digits}",
+        "",
+        "## SPAM-CHECK",
+    ]
+    for label, url in _reputation_links(digits, natl):
+        lines.append(f"  {label}: {url}")
+    lines += ["", "## SOCIAL-MEDIA SUCHE"]
+    for label, url in _social_search(e164, natl):
+        lines.append(f"  {label}: {url}")
+    lines += ["", "## OSINT-LINKS"]
+    for label, url in _osint_links(e164, natl, n):
+        lines.append(f"  {label}: {url}")
+    lines += ["", "## CALLERID / LOOKUP"]
+    callerid_sources = [
+        f"  Truecaller:   https://www.truecaller.com/search/de/{q(natl_clean)}",
+        f"  Das Örtliche: https://www.dasoertliche.de/rueckwaertssuche/?ph={q(natl_clean)}",
+        f"  Sync.me:      https://sync.me/search/?number={q(digits)}",
+        f"  NumLookup:    https://numlookup.com/search?phone={q(e164)}",
+    ]
+    lines += callerid_sources
+    lines += [
+        "",
+        "## HINWEIS",
+        "Name/Adresse/Konten sind NICHT aus der Nummer abrufbar – nur via OSINT-Recherche,",
+        "falls die Person sie selbst öffentlich gemacht hat. Nur für legitime Zwecke nutzen.",
+    ]
+    body = "\n".join(lines) + "\n"
+    out_dir = os.path.expanduser("~/Schreibtisch/Androidpanzer/phone_osint")
+    os.makedirs(out_dir, exist_ok=True)
+    fn = os.path.join(out_dir, f"{digits}_{_time.strftime('%Y%m%d_%H%M%S')}.txt")
+    with open(fn, "w", encoding="utf-8") as f:
+        f.write(body)
+    ui.show_report(body, f"Telefon-OSINT · {intl}", fn, note="Vollständiger Report")
+    ui.pause()
 
 
 def analyze(raw: str) -> None:

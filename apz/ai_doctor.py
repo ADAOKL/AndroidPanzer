@@ -806,3 +806,9 @@ class AIDoctor:
 def create_ai_doctor(adb: ADB) -> AIDoctor:
     """Erstellt neuen AI Doctor."""
     return AIDoctor(adb)
+
+
+def menu(adb: ADB) -> None:
+    """AI Doctor Menu Wrapper."""
+    doctor = AIDoctor(adb)
+    doctor.show_ai_doctor_menu()

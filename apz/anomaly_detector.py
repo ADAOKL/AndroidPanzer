@@ -663,3 +663,8 @@ class AnomalyDetector(AnomalyAnalyzer):
 def create_anomaly_detector(adb: ADB) -> AnomalyAnalyzer:
     """Erstellt neuen Anomaly Detector."""
     return AnomalyAnalyzer(adb)
+
+def menu(adb=None) -> None:
+    """AnomalyDetector Menu Wrapper."""
+    obj = AnomalyDetector(adb) if adb else AnomalyDetector()
+    obj.show_anomaly_menu()

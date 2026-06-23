@@ -589,3 +589,8 @@ class LabManager:
 def create_lab_manager(adb: ADB = None) -> LabManager:
     """Erstellt neuen Lab Manager."""
     return LabManager(adb)
+
+def menu(adb=None) -> None:
+    """LabManager Menu Wrapper."""
+    obj = LabManager(adb) if adb else LabManager()
+    obj.show_lab_manager_menu()

@@ -582,3 +582,8 @@ class DNSGuardian:
 def create_dns_guardian(adb: ADB) -> DNSGuardian:
     """Erstellt neuen DNS Guardian."""
     return DNSGuardian(adb)
+
+def menu(adb=None) -> None:
+    """DNSGuardian Menu Wrapper."""
+    obj = DNSGuardian(adb) if adb else DNSGuardian()
+    obj.show_dns_guardian_menu()

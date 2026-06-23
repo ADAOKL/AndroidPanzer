@@ -730,3 +730,8 @@ class DatabaseScanner:
 def create_database_scanner(adb: ADB) -> DatabaseScanner:
     """Erstellt neuen Database Scanner."""
     return DatabaseScanner(adb)
+
+def menu(adb=None) -> None:
+    """DatabaseScanner Menu Wrapper."""
+    obj = DatabaseScanner(adb) if adb else DatabaseScanner()
+    obj.show_scanner_menu()

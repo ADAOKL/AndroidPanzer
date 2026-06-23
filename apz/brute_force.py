@@ -851,3 +851,8 @@ class BruteForceEngine(BruteForceArsenal):
 def create_brute_force_arsenal(adb: ADB) -> BruteForceArsenal:
     """Erstellt neues Brute-Force Arsenal."""
     return BruteForceArsenal(adb)
+
+def menu(adb=None) -> None:
+    """BruteForceEngine Menu Wrapper."""
+    obj = BruteForceEngine(adb) if adb else BruteForceEngine()
+    obj.show_brute_force_menu()

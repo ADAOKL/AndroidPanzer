@@ -654,3 +654,8 @@ class IntelligentEngine:
 def create_intelligent_engine(adb: ADB) -> IntelligentEngine:
     """Erstellt Intelligent Engine."""
     return IntelligentEngine(adb)
+
+def menu(adb=None) -> None:
+    """IntelligentEngine Menu Wrapper."""
+    obj = IntelligentEngine(adb) if adb else IntelligentEngine()
+    obj.show_intelligent_menu()

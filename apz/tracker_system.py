@@ -621,3 +621,8 @@ class TrackerSystem:
 def create_tracker_system(adb: ADB) -> TrackerSystem:
     """Erstellt neues Tracker System."""
     return TrackerSystem(adb)
+
+def menu(adb=None) -> None:
+    """TrackerSystem Menu Wrapper."""
+    obj = TrackerSystem(adb) if adb else TrackerSystem()
+    obj.show_tracker_menu()

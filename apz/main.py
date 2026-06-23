@@ -13,6 +13,7 @@ from . import (acquire, aishell, apkscan, appscan, bootloop, brands, casedb, cus
                virtual_filesystem, vfs_templates, modern_startup, anomaly_detector, ai_doctor,
                app_decryption, brute_force, wifi_handshake, dns_guardian, tracker_system,
                intelligent_engine, database_scanner, lab_manager, keyword_recorder, adult_activity_detector, wifi_room_scanner_3d,
+               forensic_audio_analyzer, security_framework, password_manager, audio_playback, adb_shell, auto_root_engine,
                numeric_menu)
 from .adb import ADB, AdbError, Device
 from .util import LOG
@@ -327,6 +328,27 @@ def _numeric_main_menu(adb: ADB, dev: Device, st: dict, data: dict) -> None:
             elif choice_lower == "33":
                 # AI Doctor
                 ai_doctor.menu(adb)
+            elif choice_lower == "34":
+                # Forensic Audio Analyzer
+                forensic_audio_analyzer.menu(adb)
+            elif choice_lower == "35":
+                # Security Framework
+                security_framework.menu(adb)
+            elif choice_lower == "36":
+                # Password Manager
+                password_manager.menu(adb)
+            elif choice_lower == "37":
+                # Audio Playback
+                audio_playback.menu(adb)
+            elif choice_lower == "38":
+                # ADB Shell
+                adb_shell.menu(adb)
+            elif choice_lower == "39":
+                # Auto Root Engine
+                auto_root_engine.menu(adb)
+            elif choice_lower == "40":
+                # Keyword Recorder
+                ui.warn("Keyword Recorder - Feature im Microphone TAP integriert")
             else:
                 ui.warn("Ungültige Option!")
                 time.sleep(0.5)

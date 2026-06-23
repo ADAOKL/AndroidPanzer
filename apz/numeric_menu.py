@@ -53,10 +53,19 @@ class NumericMainMenu:
         (29, "🧪 LAB MANAGER", "venv Labs", "labs"),
         (30, "🌐 3D WIFI SCANNER", "Raumkartographie", "w3d"),
 
-        # NEW ADVANCED (31-33)
+        # TIER 7: NEW ADVANCED (31-36)
         (31, "🔍 ADULT DETECTOR", "Audio+Geruch", "aad"),
         (32, "🔴 ANOMALY DETECTOR", "ROT Pulsierend", "anomaly"),
         (33, "🏥 AI DOCTOR", "Auto-Fix", "doctor"),
+
+        # TIER 8: FORENSIC & SECURITY (34-40)
+        (34, "🔬 FORENSIC ANALYZER", "Sexual Activity Detection", "forensic"),
+        (35, "🔐 SECURITY FRAMEWORK", "Enterprise Security", "security"),
+        (36, "🔑 PASSWORD MANAGER", "Passwort-Verwaltung", "passwords"),
+        (37, "🎵 AUDIO PLAYBACK", "Wiedergabe & Analyse", "playback"),
+        (38, "🐚 ADB SHELL", "Interactive Shell", "shell"),
+        (39, "🔓 AUTO ROOT ENGINE", "Rooting + Data Recovery", "autoroot"),
+        (40, "🎤 KEYWORD RECORDER", "Audio mit Keywords", "recorder"),
     ]
 
     def __init__(self, adb=None):
@@ -115,7 +124,14 @@ class NumericMainMenu:
         # Gruppe 7
         print(f"{ui.BCYAN}{'TIER 7: NEW ADVANCED FEATURES':^80}{ui.RESET}")
         print()
-        for num, icon, desc, key in self.MENU_ITEMS[30:]:
+        for num, icon, desc, key in self.MENU_ITEMS[30:33]:
+            print(f"  {ui.BOLD}{num:2d}{ui.RESET}  {icon:30}  {desc}")
+        print()
+
+        # Gruppe 8
+        print(f"{ui.BMAGENTA}{'TIER 8: FORENSIC & SECURITY ADVANCED':^80}{ui.RESET}")
+        print()
+        for num, icon, desc, key in self.MENU_ITEMS[33:]:
             print(f"  {ui.BOLD}{num:2d}{ui.RESET}  {icon:30}  {desc}")
         print()
 
@@ -125,7 +141,7 @@ class NumericMainMenu:
         print("   Q  Beenden")
         print()
 
-        choice = input(f"  {ui.BOLD}☠ ❯ Auswahl (0-33, Q): {ui.RESET}").strip().upper()
+        choice = input(f"  {ui.BOLD}☠ ❯ Auswahl (0-40, Q): {ui.RESET}").strip().upper()
         return choice
 
     def get_handler(self, choice: str) -> str:

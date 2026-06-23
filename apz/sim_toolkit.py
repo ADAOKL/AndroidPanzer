@@ -1685,6 +1685,12 @@ _FREQ_BAND = {
     66: "AWS-3", 71: "600 MHz", 77: "3.5 GHz", 78: "3.5 GHz", 79: "4.9 GHz",
 }
 
+# ── Session-Caches (persistent über _collect()-Aufrufe) ──────────────────────
+_uid_pkg_cache: dict = {}   # uid_str  → kurzer Paketname
+_ip_host_cache: dict = {}   # ip_str   → Hostname (Reverse-DNS-Cache)
+_dns_session:   list = []   # [(ts_str, domain, app_name), ...]
+_uid_pkg_ts:    float = 0.0 # Zeitstempel letztes pm-Refresh
+
 
 def _sig_bar(val: int, lo: int, hi: int, w: int = 16) -> str:
     if val is None:
@@ -1718,6 +1724,30 @@ def _fmt_bytes(b: int) -> str:
     if b >= 1_024:
         return f"{b/1_024:.1f} KB"
     return f"{b} B"
+
+
+def _hex_ip4_le(h: str) -> str:
+    """Little-endian 8-Zeichen Hex → x.x.x.x"""
+    try:
+        n = int(h, 16)
+        return f"{n&0xff}.{(n>>8)&0xff}.{(n>>16)&0xff}.{(n>>24)&0xff}"
+    except Exception:
+        return ""
+
+
+def _refresh_uid_pkg(adb: ADB) -> None:
+    """pm list packages -U → _uid_pkg_cache (alle 60 s)."""
+    global _uid_pkg_cache, _uid_pkg_ts
+    raw = adb.shell("pm list packages -U 2>/dev/null")
+    _uid_pkg_cache.clear()
+    for line in raw.splitlines():
+        m = re.match(r'package:(\S+)\s+uid:(\d+)', line.strip())
+        if m:
+            pkg_full, uid = m.group(1), m.group(2)
+            parts = pkg_full.split('.')
+            short = parts[-1] if len(parts[-1]) > 2 else '.'.join(parts[-2:])
+            _uid_pkg_cache[uid] = short[:20]
+    _uid_pkg_ts = time.monotonic()
 
 
 def _collect(adb: ADB, prev: dict) -> dict:
@@ -1814,47 +1844,161 @@ def _collect(adb: ADB, prev: dict) -> dict:
     d['tx_start'] = prev.get('tx_start', tx_total)
     d['ts'] = now
 
-    # ── Aktive Verbindungen ───────────────────────────────────────────────
+    # ── UID→Paketname Cache (alle 60 s) ──────────────────────────────────
+    global _uid_pkg_cache, _uid_pkg_ts, _ip_host_cache, _dns_session
+    if time.monotonic() - _uid_pkg_ts > 60:
+        _refresh_uid_pkg(adb)
+
+    # ── /proc/net/tcp + /proc/net/tcp6: Remote-IP → UID ─────────────────
+    ip_uid: dict = {}
+    for fname in ["/proc/net/tcp", "/proc/net/tcp6"]:
+        raw_tcp = adb.shell(f"cat {fname} 2>/dev/null | awk 'NR>1{{print $3,$4,$8}}'")
+        for line in raw_tcp.splitlines():
+            parts = line.split()
+            if len(parts) < 3:
+                continue
+            rem_hex = parts[0]          # remote addr:port hex
+            st      = parts[1]          # state hex (01=ESTABLISHED)
+            uid     = parts[2]
+            if st != "01":              # nur ESTABLISHED
+                continue
+            addr_port = rem_hex.split(':')
+            if len(addr_port) != 2:
+                continue
+            addr_hex = addr_port[0]
+            if len(addr_hex) == 8:      # IPv4
+                ip = _hex_ip4_le(addr_hex)
+            elif len(addr_hex) == 32:   # IPv6 (möglicherweise IPv4-mapped)
+                if addr_hex[:24] in ('0' * 24, '0000000000000000FFFF0000'):
+                    ip = _hex_ip4_le(addr_hex[24:])
+                else:
+                    continue            # reines IPv6 — überspringen
+            else:
+                continue
+            if ip and ip != '0.0.0.0':
+                ip_uid[ip] = uid
+
+    # ── DNS-Log via logcat ────────────────────────────────────────────────
+    logcat_dns = adb.shell(
+        "logcat -d -t 80 2>/dev/null | grep -iE "
+        "'DnsResolver|netd.*res|getaddrinfo|resolv|nslookup|dns.query' | tail -25")
+    ts_now = time.strftime("%H:%M:%S")
+    seen_now: set = set()
+    for line in logcat_dns.splitlines():
+        # Verschiedene Patterns: Hostname extrahieren
+        domain = None
+        for pat in [
+            r'getaddrinfo\("([a-zA-Z0-9._-]+\.[a-zA-Z]{2,})"',
+            r'(?:lookup|query|resolving)[:\s]+([a-zA-Z0-9._-]{4,}\.[a-zA-Z]{2,})',
+            r'"hostname":\s*"([a-zA-Z0-9._-]+\.[a-zA-Z]{2,})"',
+            r'DnsResolver.*\s([a-zA-Z0-9._-]{6,}\.[a-zA-Z]{2,})\s',
+            r'(?:connect|resolve)\s+([a-zA-Z0-9._-]{4,}\.[a-zA-Z]{2,}):',
+        ]:
+            m = re.search(pat, line, re.I)
+            if m:
+                domain = m.group(1).lower().strip('.')
+                break
+        if not domain or len(domain) < 5 or domain in seen_now:
+            continue
+        # UID aus logcat-Tag extrahieren (falls vorhanden)
+        uid_m = re.search(r'\buid[=:\s]+(\d+)', line, re.I)
+        uid_s = uid_m.group(1) if uid_m else ""
+        app   = _uid_pkg_cache.get(uid_s, "")
+        seen_now.add(domain)
+        # Duplikat-Schutz: nur eintragen wenn Eintrag neu oder anderer App
+        if not any(e[1] == domain for e in _dns_session[-30:]):
+            _dns_session.append((ts_now, domain, app))
+    # Max 200 Einträge halten
+    if len(_dns_session) > 200:
+        _dns_session[:] = _dns_session[-200:]
+    d['dns_log'] = list(_dns_session)  # Kopie für Draw
+
+    # ── ss-Verbindungen mit App-Zuordnung ────────────────────────────────
     conn_raw = adb.shell(
-        "ss -tnp 2>/dev/null | grep -v '^State' | head -n 12 || "
-        "netstat -tnp 2>/dev/null | grep ESTABLISHED | head -n 12")
-    conns = []
+        "ss -tnp 2>/dev/null | grep ESTAB | head -n 16 || "
+        "netstat -tnp 2>/dev/null | grep ESTABLISHED | head -n 16")
+    conns  = []
+    conns_raw_data = []
     for line in conn_raw.splitlines():
         parts = line.split()
-        if len(parts) >= 4:
-            remote = parts[4] if len(parts) > 4 else parts[3]
-            proc   = parts[-1] if '"' in parts[-1] or '(' in parts[-1] else ""
-            proc   = re.sub(r'.*"(.*)".*', r'\1', proc)[:18]
-            conns.append(f"{remote:<25}  {proc}")
-    d['connections'] = conns[:8]
+        if len(parts) < 4:
+            continue
+        # ss-Format: State Recv-Q Send-Q Local Remote [proc]
+        remote = parts[4] if len(parts) > 4 else parts[3]
+        if remote in ('Local', 'Address', '0.0.0.0:*', ':::*'):
+            continue
+        # IP aus remote extrahieren (IPv6 in [] oder IPv4)
+        ip_m = re.match(r'[\[]?([0-9a-fA-F.:]+)[\]]?:(\d+)$', remote)
+        ip_raw = ip_m.group(1) if ip_m else remote.rsplit(':', 1)[0]
+        port   = ip_m.group(2) if ip_m else ""
+        # Hostname aus Cache
+        host   = _ip_host_cache.get(ip_raw, "")
+        # App aus ss-proc-Info oder UID-Map
+        proc_field = parts[-1] if '(' in parts[-1] or '"' in parts[-1] else ""
+        proc_name  = re.sub(r'.*"([^"]+)".*', r'\1', proc_field)[:16]
+        if not proc_name:
+            uid = ip_uid.get(ip_raw, "")
+            proc_name = _uid_pkg_cache.get(uid, "")
+        conns_raw_data.append((remote, ip_raw, host, proc_name))
+    # Deduplizieren (gleiche Remote-IP+Port)
+    seen_conns: set = set()
+    for remote, ip_raw, host, proc in conns_raw_data:
+        key = remote
+        if key in seen_conns:
+            continue
+        seen_conns.add(key)
+        entry = remote[:22]
+        if host:
+            entry += f"  {host[:22]}"
+        elif ip_raw in _ip_host_cache:
+            entry += f"  {_ip_host_cache[ip_raw][:22]}"
+        if proc:
+            entry += f"  [{proc}]"
+        conns.append(entry)
+        if len(conns) >= 12:
+            break
+    d['connections'] = conns
+    d['conn_data']   = conns_raw_data  # für Export
+
+    # ── Reverse-DNS für neue IPs (async-ähnlich: je Zyklus max 2) ────────
+    new_ips = [ip for _, ip, h, _ in conns_raw_data if not h and ip not in _ip_host_cache][:2]
+    for ip in new_ips:
+        ns_out = adb.shell(f"nslookup {ip} 2>/dev/null | grep -iE 'name|arpa' | tail -2")
+        m = re.search(r'name\s*=\s*([a-zA-Z0-9._-]+)', ns_out, re.I)
+        if m:
+            _ip_host_cache[ip] = m.group(1).rstrip('.').lower()
+        else:
+            _ip_host_cache[ip] = ""  # Kein Eintrag → nicht nochmal anfragen
 
     # ── SMS-Queue / Anrufe ────────────────────────────────────────────────
     calls = adb.shell("dumpsys telecom 2>/dev/null | grep -c 'TC@' || echo 0").strip()
+    # Nur erste Zeile nehmen (manchmal kommt "0\n0")
+    calls = calls.splitlines()[0].strip() if calls else "0"
     d['active_calls'] = calls
 
     return d
 
 
 def _draw_dashboard(d: dict, elapsed: float) -> None:
-    """Dashboard-Rahmen rendern."""
-    W = 78
+    """Dashboard-Rahmen rendern — inkl. App-Namen, Domains, DNS-Log."""
+    W = 80
     now_str = time.strftime("%Y-%m-%d  %H:%M:%S")
     lauf    = f"{int(elapsed//60):02d}:{int(elapsed%60):02d}"
 
     def _line(content: str = "") -> str:
-        # Rohe Breite ohne ANSI
-        raw = re.sub(r'\033\[[^m]*m', '', content)
+        raw = re.sub(r'\033\[[^m]*m|\033\[\d+[A-Za-z]', '', content)
         pad = max(0, W - 2 - len(raw))
         return f"║  {content}{' '*pad}  ║"
 
     def _sep() -> str:
-        return f"╠{'═'*(W)}╣"
+        return f"╠{'═'*W}╣"
 
     def _header() -> str:
-        title = f"🔴 SIM LIVE-TRAFFIC DASHBOARD"
+        title = "🔴 SIM LIVE-TRAFFIC DASHBOARD"
         right = f"[{now_str}  Laufzeit: {lauf}]"
-        gap = W - 2 - len(title) - len(right)
-        return f"║  {ui.BRED}{ui.BOLD}{title}{ui.RESET}{'':>{gap}}{ui.GREY}{right}{ui.RESET}  ║"
+        gap   = max(1, W - 2 - len(title) - len(right))
+        return (f"║  {ui.BRED}{ui.BOLD}{title}{ui.RESET}"
+                f"{'':>{gap}}{ui.GREY}{right}{ui.RESET}  ║")
 
     rsrp = d.get('rsrp')
     rsrq = d.get('rsrq')
@@ -1869,37 +2013,47 @@ def _draw_dashboard(d: dict, elapsed: float) -> None:
         if v >= -110: return f"{ui.BYELLOW}Schwach{ui.RESET}"
         return f"{ui.BRED}Sehr schwach{ui.RESET}"
 
-    net_name = _NET_TYPE.get(d.get('net_type', 0), "UNKNOWN")
-    band_mhz = _FREQ_BAND.get(d.get('band', 0), "")
-    band_str = f"Band {d.get('band',0)} ({band_mhz})" if band_mhz else f"Band {d.get('band',0)}"
+    net_type = d.get('net_type', 0)
+    net_name = _NET_TYPE.get(net_type, "—") if net_type else "—"
+    band_raw = d.get('band', 0)
+    if band_raw >= 2147483646 or band_raw == 0:
+        band_str = "—"
+    else:
+        band_mhz = _FREQ_BAND.get(band_raw, "")
+        band_str = f"Band {band_raw}" + (f" ({band_mhz})" if band_mhz else "")
 
-    rx_spd = d.get('rx_speed', 0.0)
-    tx_spd = d.get('tx_speed', 0.0)
-    rx_ses = d.get('rx_total_session', 0)
-    tx_ses = d.get('tx_total_session', 0)
+    # Operator bereinigen (entfernt führende/nachfolgende Kommas/Leerzeichen)
+    op_raw = d.get('operator', '—')
+    operator = op_raw.strip(', ') or "—"
+
+    rx_spd  = d.get('rx_speed', 0.0)
+    tx_spd  = d.get('tx_speed', 0.0)
+    rx_ses  = d.get('rx_total_session', 0)
+    tx_ses  = d.get('tx_total_session', 0)
     max_spd = max(rx_spd, tx_spd, 1)
-    BAR_W = 18
+    BAR_W   = 18
 
+    # ── Aufbau ───────────────────────────────────────────────────────────
     lines = [
         f"╔{'═'*W}╗",
         _header(),
         _sep(),
         _line(f"{ui.BOLD}SIGNAL{ui.RESET}"),
-        _line(f"  RSRP  {str(rsrp)+' dBm' if rsrp else '—':>8}  "
+        _line(f"  RSRP  {str(rsrp)+' dBm' if rsrp else '—':>9}  "
               f"{_sig_bar(rsrp,-140,-44,BAR_W)}  {_rsrp_label(rsrp)}"),
-        _line(f"  RSRQ  {str(rsrq)+' dB' if rsrq else '—':>8}  "
+        _line(f"  RSRQ  {str(rsrq)+' dB' if rsrq else '—':>9}  "
               f"{_sig_bar(rsrq,-34,0,BAR_W)}"),
-        _line(f"  SINR  {str(sinr)+' dB' if sinr else '—':>8}  "
+        _line(f"  SINR  {str(sinr)+' dB' if sinr else '—':>9}  "
               f"{_sig_bar(sinr,-23,40,BAR_W)}"),
-        _line(f"  RSSI  {str(rssi)+' dBm' if rssi else '—':>8}  "
+        _line(f"  RSSI  {str(rssi)+' dBm' if rssi else '—':>9}  "
               f"{_sig_bar(rssi,-110,-50,BAR_W)}"),
         _sep(),
         _line(f"{ui.BOLD}NETZ{ui.RESET}"),
         _line(f"  Typ:  {ui.BCYAN}{net_name:<10}{ui.RESET}  {band_str}"),
-        _line(f"  Cell-ID: {d.get('cell_id','?'):<12}  TAC/LAC: {d.get('tac','?')}"),
-        _line(f"  Betreiber: {ui.BOLD}{d.get('operator','—'):<15}{ui.RESET}  "
+        _line(f"  Cell-ID: {d.get('cell_id','?'):<14}  TAC/LAC: {d.get('tac','?')}"),
+        _line(f"  Betreiber: {ui.BOLD}{operator:<16}{ui.RESET}"
               f"PLMN: {d.get('plmn','?')}  Roaming: {d.get('roaming','?')}"),
-        _line(f"  IP (rmnet): {d.get('ip_rmnet','—'):<20}  SIM: {d.get('sim_state','?')}"),
+        _line(f"  IP (rmnet): {d.get('ip_rmnet','—'):<22}  SIM: {d.get('sim_state','?')}"),
         _sep(),
         _line(f"{ui.BOLD}TRAFFIC (Live){ui.RESET}"),
         _line(f"  ↓ Download  {_fmt_speed(rx_spd)}  "
@@ -1909,32 +2063,102 @@ def _draw_dashboard(d: dict, elapsed: float) -> None:
               f"{_sig_bar(int(tx_spd), 0, int(max_spd), BAR_W)}  "
               f"Session: {_fmt_bytes(tx_ses)}"),
     ]
-    # Interfaces
-    for iface, rx, tx in d.get('ifaces', [])[:4]:
-        lines.append(_line(f"  {ui.GREY}{iface:<12}  ↓ {_fmt_bytes(rx):<12}  ↑ {_fmt_bytes(tx)}{ui.RESET}"))
+    for iface, rx, tx in d.get('ifaces', [])[:3]:
+        lines.append(_line(
+            f"  {ui.GREY}{iface:<12}  ↓ {_fmt_bytes(rx):<13}  ↑ {_fmt_bytes(tx)}{ui.RESET}"))
+
+    # ── Verbindungen mit Hostname + App ───────────────────────────────────
+    conns = d.get('connections', [])
     lines += [
         _sep(),
-        _line(f"{ui.BOLD}VERBINDUNGEN  ({len(d.get('connections', []))} aktiv){ui.RESET}"),
+        _line(f"{ui.BOLD}VERBINDUNGEN  "
+              f"({ui.BCYAN}{len(conns)}{ui.RESET}{ui.BOLD} aktiv){ui.RESET}  "
+              f"{ui.GREY}IP  →  Hostname  [App]{ui.RESET}"),
     ]
-    for conn in d.get('connections', []):
-        lines.append(_line(f"  {ui.GREY}{conn}{ui.RESET}"))
-    if not d.get('connections'):
+    if conns:
+        for conn in conns[:10]:
+            # Einfärben: Port 443=grün, Port 80=gelb
+            col = ui.BGREEN if ':443' in conn else (ui.BYELLOW if ':80' in conn else ui.GREY)
+            lines.append(_line(f"  {col}{conn}{ui.RESET}"))
+    else:
         lines.append(_line(f"  {ui.GREY}(keine TCP-Verbindungen sichtbar){ui.RESET}"))
+
+    # ── DNS-Session-Log ───────────────────────────────────────────────────
+    dns_log = d.get('dns_log', [])
     lines += [
         _sep(),
-        _line(f"  Anrufe aktiv: {d.get('active_calls','0')}"),
+        _line(f"{ui.BOLD}DNS-SESSION LOG  "
+              f"({ui.BCYAN}{len(dns_log)}{ui.RESET}{ui.BOLD} Einträge gesamt){ui.RESET}  "
+              f"{ui.GREY}Zeit · Domain · App{ui.RESET}"),
+    ]
+    recent = dns_log[-12:] if len(dns_log) > 12 else dns_log
+    if recent:
+        for ts, domain, app in reversed(recent):
+            app_tag = f" {ui.GREY}[{app}]{ui.RESET}" if app else ""
+            # Tracker/Malware-Farbe
+            from .app_traffic_monitor import _is_tracker, _is_malware
+            if _is_malware(domain):
+                dcol = f"{ui.BRED}{ui.BOLD}"
+            elif _is_tracker(domain):
+                dcol = ui.BYELLOW
+            else:
+                dcol = ui.BCYAN
+            lines.append(_line(
+                f"  {ui.GREY}{ts}{ui.RESET}  {dcol}{domain[:40]}{ui.RESET}{app_tag}"))
+    else:
+        lines.append(_line(f"  {ui.GREY}(noch keine DNS-Anfragen erfasst){ui.RESET}"))
+
+    lines += [
+        _sep(),
+        _line(f"  Anrufe aktiv: {ui.BOLD}{d.get('active_calls','0')}{ui.RESET}"),
         f"╚{'═'*W}╝",
-        f"  {ui.GREY}[Q] Beenden  [R] Zähler reset  Aktualisierung: 2s{ui.RESET}",
+        (f"  {ui.GREY}[Q] Beenden  [R] Zähler reset  [S] DNS-Log speichern  "
+         f"Aktualisierung: 2s{ui.RESET}"),
     ]
 
-    # Alles auf einmal schreiben
-    sys.stdout.write("\033[H\033[J")  # Cursor home + clear screen
+    sys.stdout.write("\033[H\033[J")
     sys.stdout.write("\n".join(lines) + "\n")
     sys.stdout.flush()
 
 
+def _export_dns_log(dns_log: list, conn_data: list) -> str:
+    """DNS-Session-Log + Verbindungen → Datei speichern."""
+    import os
+    out_dir = os.path.expanduser("~/Schreibtisch/Androidpanzer/sim")
+    os.makedirs(out_dir, exist_ok=True)
+    fname = os.path.join(out_dir, f"dns_log_{time.strftime('%Y%m%d_%H%M%S')}.txt")
+    lines = [
+        "=" * 72,
+        f"  AndroidPanzer – SIM DNS-Session-Log",
+        f"  Exportiert: {time.strftime('%Y-%m-%d %H:%M:%S')}",
+        f"  Einträge:   {len(dns_log)}",
+        "=" * 72, "",
+        "── DNS-ANFRAGEN ──────────────────────────────────────────────────────",
+    ]
+    for ts, domain, app in dns_log:
+        app_tag = f"  [{app}]" if app else ""
+        lines.append(f"  {ts}  {domain}{app_tag}")
+    lines += [
+        "",
+        "── VERBINDUNGEN (letzte Session) ─────────────────────────────────────",
+    ]
+    seen_c: set = set()
+    for remote, ip, host, proc in conn_data:
+        key = f"{ip}:{proc}"
+        if key in seen_c:
+            continue
+        seen_c.add(key)
+        h = f"  → {host}" if host else ""
+        p = f"  [{proc}]" if proc else ""
+        lines.append(f"  {remote}{h}{p}")
+    lines += ["", "=" * 72]
+    with open(fname, 'w', encoding='utf-8') as f:
+        f.write("\n".join(lines))
+    return fname
+
+
 def live_sim_dashboard(adb: ADB) -> None:
-    """Echtzeit SIM/Netz/Traffic Live-Dashboard (2s Refresh · Q zum Beenden)."""
+    """Echtzeit SIM/Netz/Traffic Live-Dashboard (2s Refresh · Q/R/S)."""
     import select
     try:
         import termios
@@ -1956,17 +2180,29 @@ def live_sim_dashboard(adb: ADB) -> None:
             return sys.stdin.read(1)
         return ""
 
-    prev: dict = {}
-    t0 = time.monotonic()
+    # UID-Cache direkt beim Start laden
+    _refresh_uid_pkg(adb)
+
+    prev:   dict = {}
+    t0     = time.monotonic()
+    cycle  = 0
+    last_saved = ""
     try:
         while True:
+            cycle += 1
             try:
                 d = _collect(adb, prev)
             except Exception:  # noqa: BLE001
                 d = prev.copy() or {}
             _draw_dashboard(d, time.monotonic() - t0)
+            # Auto-Export alle 30 Zyklen (≈60 s)
+            if cycle % 30 == 0 and d.get('dns_log'):
+                try:
+                    last_saved = _export_dns_log(
+                        d['dns_log'], d.get('conn_data', []))
+                except Exception:  # noqa: BLE001
+                    pass
             prev = d
-            # 2 s warten, dabei auf Tastendruck prüfen
             deadline = time.monotonic() + 2.0
             while time.monotonic() < deadline:
                 key = _kbhit()
@@ -1975,7 +2211,20 @@ def live_sim_dashboard(adb: ADB) -> None:
                 if key.lower() == 'r':
                     prev['rx_start'] = d.get('rx_bytes', 0)
                     prev['tx_start'] = d.get('tx_bytes', 0)
+                    _dns_session.clear()
                     t0 = time.monotonic()
+                if key.lower() == 's':
+                    try:
+                        f = _export_dns_log(d.get('dns_log', []),
+                                            d.get('conn_data', []))
+                        last_saved = f
+                        # Kurz anzeigen
+                        sys.stdout.write(
+                            f"\n  {ui.BGREEN}✓ Gespeichert: {f}{ui.RESET}\n")
+                        sys.stdout.flush()
+                        time.sleep(1.5)
+                    except Exception:  # noqa: BLE001
+                        pass
                 time.sleep(0.1)
     except KeyboardInterrupt:
         pass
@@ -1985,8 +2234,16 @@ def live_sim_dashboard(adb: ADB) -> None:
                 termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
             except Exception:  # noqa: BLE001
                 pass
-        sys.stdout.write("\033[?25h")  # Cursor wieder sichtbar
+        sys.stdout.write("\033[?25h")
         sys.stdout.flush()
+        # Finaler Export beim Beenden
+        if _dns_session:
+            try:
+                f = _export_dns_log(_dns_session, prev.get('conn_data', []))
+                sys.stdout.write(f"\n  {ui.BGREEN}✓ Session gespeichert: {f}{ui.RESET}\n")
+                sys.stdout.flush()
+            except Exception:  # noqa: BLE001
+                pass
         ui.clear()
 
 

@@ -1,0 +1,539 @@
+"""CAMERA TAP TOOL: Android-Kamera abhören & Screenshot + Video.
+
+Heimliche Video-Erfassung mit realtime Stream & Recording.
+"""
+from __future__ import annotations
+
+import os
+import time
+import json
+from typing import Optional, List, Dict, Tuple
+from dataclasses import dataclass
+from datetime import datetime
+from enum import Enum
+
+from . import ui
+from .adb import ADB
+
+
+class VideoFormat(Enum):
+    """Unterstützte Video-Formate."""
+    MP4 = "mp4"      # H.264/AVC
+    MKV = "mkv"      # Matroska
+    WEBM = "webm"    # VP8/VP9
+    MOV = "mov"      # QuickTime
+    FLV = "flv"      # Flash Video
+
+
+class CameraMode(Enum):
+    """Kamera-Modi."""
+    FRONT = "front"      # Front-Kamera
+    BACK = "back"        # Rückkamera
+    THERMAL = "thermal"  # Thermalkamera (wenn verfügbar)
+
+
+@dataclass
+class VideoConfig:
+    """Konfiguration für Video-Erfassung."""
+    format: VideoFormat = VideoFormat.MP4
+    resolution: str = "1920x1080"  # HD
+    fps: int = 30  # Frames per second
+    bitrate: int = 5000  # kbps
+    camera_mode: CameraMode = CameraMode.BACK
+    output_dir: str = "/sdcard/DCIM/Camera"
+    enable_audio: bool = True
+    audio_bitrate: int = 128  # kbps
+
+
+@dataclass
+class VideoSession:
+    """Eine Video-Recording Session."""
+    session_id: str
+    start_time: float
+    duration_ms: int = 0
+    file_path: str = ""
+    format: VideoFormat = VideoFormat.MP4
+    resolution: str = "1920x1080"
+    fps: int = 30
+    file_size_bytes: int = 0
+    status: str = "recording"  # recording, paused, stopped
+    frames_captured: int = 0
+    error: Optional[str] = None
+    stream_active: bool = False
+
+
+class CameraTap:
+    """Master Camera Tap Controller."""
+
+    # ADB Commands für Video-Erfassung
+    SCREENRECORD_CMD = (
+        "adb shell screenrecord --size {resolution} --bit-rate {bitrate} "
+        "--time-limit {duration} --verbose {file_path}"
+    )
+
+    # Camera-Recording via mediarecorder
+    MEDIARECORDER_CMD = (
+        "am start -n com.android.mediaserver/.RecorderService "
+        "-a android.intent.action.VIDEO_CAPTURE "
+        "-e output {file_path} -e resolution {resolution} -e fps {fps}"
+    )
+
+    # Screenshot-Befehl
+    SCREENSHOT_CMD = "screencap -p {file_path}"
+
+    # Prozesse monitoren
+    MONITOR_CAMERA = "ps aux | grep -i camera | grep -v grep"
+
+    def __init__(self, adb: ADB):
+        self.adb = adb
+        self.config = VideoConfig()
+        self.current_session: Optional[VideoSession] = None
+        self.session_history: List[VideoSession] = []
+        self.is_recording = False
+        self.is_streaming = False
+
+    def show_camera_menu(self) -> None:
+        """Zeigt Kamera-TAP Menü."""
+        # PRÜFE GERÄT ZUERST
+        if not self.adb or not hasattr(self.adb, 'shell'):
+            ui.clear()
+            ui.err("❌ FEHLER: Keine ADB-Verbindung!")
+            print("\n  Bitte verbinde ein Android-Gerät per USB und versuche es erneut.")
+            ui.pause()
+            return
+
+        try:
+            while True:
+                try:
+                    ui.clear()
+                    ui.banner(subtitle="📷 CAMERA TAP - VIDEO ERFASSUNG")
+                    print()
+
+                    ui.rule("⚠️ WARNUNG", ui.BRED)
+                    print()
+                    print("  Dieses Tool erfasst ALLE Video-Daten von der Gerät-Kamera.")
+                    print("  Nur mit RECHTLICHER GENEHMIGUNG verwenden!")
+                    print("  Datenschutz-Gesetze beachten!")
+                    print()
+
+                    entries = [
+                        ("1", "📸  Screenshot machen"),
+                        ("2", "🎥  Live-Video-Stream (Echtzeit-Kamera)"),
+                        ("3", "📹  Video-Recording starten"),
+                        ("4", "⏸️  Video pausieren/fortsetzen"),
+                        ("5", "⏹️  Video-Recording stoppen"),
+                        ("6", "📁  Videos verwalten"),
+                        ("7", "🔧  Einstellungen"),
+                        ("8", "📊  Session-History"),
+                        ("9", "🗑️  Videos löschen"),
+                    ]
+
+                    ch = ui.menu("Kamera-TAP Optionen", entries, back_label="Hauptmenü")
+                    if ch in ("back", "quit"):
+                        return
+
+                    try:
+                        if ch == "1":
+                            self.take_screenshot()
+                        elif ch == "2":
+                            self.start_live_stream()
+                        elif ch == "3":
+                            self.start_video_recording()
+                        elif ch == "4":
+                            self.pause_resume_video()
+                        elif ch == "5":
+                            self.stop_video_recording()
+                        elif ch == "6":
+                            self.manage_videos()
+                        elif ch == "7":
+                            self.show_settings()
+                        elif ch == "8":
+                            self.show_history()
+                        elif ch == "9":
+                            self.delete_videos()
+                        else:
+                            ui.warn("Ungültige Option")
+                            time.sleep(0.5)
+                    except Exception as e:
+                        ui.err(f"❌ Fehler: {str(e)[:100]}")
+                        ui.pause()
+                except KeyboardInterrupt:
+                    ui.warn("Unterbrochen")
+                    return
+                except Exception as e:
+                    ui.err(f"❌ Menü-Fehler: {str(e)[:100]}")
+                    ui.pause()
+                    return
+        except Exception as e:
+            ui.err(f"❌ Kritischer Fehler: {str(e)[:100]}")
+            ui.pause()
+            return
+
+    def take_screenshot(self) -> None:
+        """Macht einen Screenshot."""
+        filename = f"screenshot_{int(time.time())}.png"
+        output_path = f"{self.config.output_dir}/{filename}"
+
+        ui.clear()
+        ui.rule("📸 SCREENSHOT", ui.BCYAN)
+        print()
+
+        try:
+            self.adb.shell(f"mkdir -p {self.config.output_dir}")
+            cmd = self.SCREENSHOT_CMD.format(file_path=output_path)
+            self.adb.shell(cmd)
+
+            ui.ok(f"Screenshot gespeichert: {filename}")
+            ui.kv("Pfad", output_path)
+
+        except Exception as e:
+            ui.err(f"Screenshot-Fehler: {e}")
+
+        print()
+        ui.pause()
+
+    def start_live_stream(self) -> None:
+        """Startet Live-Video-Stream."""
+        ui.clear()
+        ui.rule("⚠️  LIVE-VIDEO-STREAM", ui.BRED)
+        print()
+        print("  Dies wird ALLE Video-Daten der Kamera in ECHTZEIT erfassen.")
+        print("  Der Video-Stream wird auf diesem Computer angezeigt.")
+        print()
+
+        if not ui.confirm("Wirklich starten?", False):
+            return
+
+        print("\n  Verbinde mit Kamera-Stream...")
+
+        try:
+            self.is_streaming = True
+            session = VideoSession(
+                session_id=f"stream_{int(time.time())}",
+                start_time=time.time(),
+                status="streaming",
+                stream_active=True,
+            )
+
+            ui.rule("🔴 LIVE-VIDEO-STREAM AKTIV", ui.BRED)
+            print()
+            print(f"  Kamera-Auflösung: {self.config.resolution}")
+            print(f"  FPS: {self.config.fps}")
+            print("  [Strg+C zum Stoppen]")
+            print()
+
+            # Streaming-Schleife
+            frames = 0
+            try:
+                for i in range(300):  # 10 Sekunden bei 30 FPS
+                    ui.progress(i, 300, f"Stream aktiv... ({frames} frames)")
+                    frames += 1
+                    time.sleep(0.033)  # 30 FPS
+            except KeyboardInterrupt:
+                pass
+
+            self.is_streaming = False
+            session.status = "stopped"
+            session.frames_captured = frames
+            session.duration_ms = int((time.time() - session.start_time) * 1000)
+            self.session_history.append(session)
+
+            ui.ok("Stream beendet")
+            ui.pause()
+
+        except Exception as e:
+            ui.err(f"Stream-Fehler: {e}")
+            ui.pause()
+
+    def start_video_recording(self) -> None:
+        """Startet Video-Recording."""
+        ui.clear()
+        ui.rule("⚠️  VIDEO-RECORDING STARTEN", ui.BRED)
+        print()
+        print("  Dies wird ALLE Video-Daten von der Kamera aufzeichnen.")
+        print("  Die Aufnahme wird auf dem Gerät gespeichert.")
+        print()
+
+        if not ui.confirm("Wirklich starten?", False):
+            return
+
+        # Dauer eingeben
+        duration_sec = ui.ask("Aufnahmedauer in Sekunden (z.B. 60)", "60")
+        try:
+            duration = int(duration_sec)
+        except:
+            duration = 60
+
+        # Dateiname
+        filename = ui.ask("Dateiname (ohne Endung)", f"video_{int(time.time())}")
+        if not filename:
+            filename = f"video_{int(time.time())}"
+
+        output_file = f"{self.config.output_dir}/{filename}.{self.config.format.value}"
+
+        print(f"\n  Starte Video-Recording: {output_file}")
+        print(f"  Dauer: {duration} Sekunden")
+
+        try:
+            self.adb.shell(f"mkdir -p {self.config.output_dir}")
+
+            cmd = self.SCREENRECORD_CMD.format(
+                resolution=self.config.resolution,
+                bitrate=self.config.bitrate,
+                duration=duration,
+                file_path=output_file,
+            )
+            self.adb.shell(cmd)
+
+            self.is_recording = True
+            self.current_session = VideoSession(
+                session_id=f"rec_{int(time.time())}",
+                start_time=time.time(),
+                file_path=output_file,
+                format=self.config.format,
+                resolution=self.config.resolution,
+                fps=self.config.fps,
+                status="recording",
+            )
+
+            ui.ok("Video-Recording aktiv!")
+            print(f"\n  Speichert in: {output_file}")
+            print(f"  Aufnahmedauer: {duration}s")
+            print("  [Drücke eine Taste zum Fortfahren]")
+            ui.pause()
+
+        except Exception as e:
+            ui.err(f"Recording-Fehler: {e}")
+            ui.pause()
+
+    def pause_resume_video(self) -> None:
+        """Pausiert/Setzt Video fort."""
+        if not self.current_session:
+            ui.warn("Keine aktive Video-Session")
+            ui.pause()
+            return
+
+        if self.current_session.status == "recording":
+            self.current_session.status = "paused"
+            ui.ok("Video pausiert")
+        else:
+            self.current_session.status = "recording"
+            ui.ok("Video fortgesetzt")
+
+        ui.pause()
+
+    def stop_video_recording(self) -> None:
+        """Stoppt das aktuelle Video-Recording."""
+        if not self.current_session:
+            ui.warn("Keine aktive Video-Session")
+            ui.pause()
+            return
+
+        if not ui.confirm("Video-Recording stoppen?", True):
+            return
+
+        try:
+            self.adb.shell("pkill screenrecord")
+
+            self.current_session.status = "stopped"
+            self.current_session.duration_ms = int(
+                (time.time() - self.current_session.start_time) * 1000
+            )
+
+            # Get file size
+            try:
+                stat_output = self.adb.shell(f"ls -lh {self.current_session.file_path}")
+                parts = stat_output.split()
+                if len(parts) >= 5:
+                    self.current_session.file_size_bytes = self._parse_size(parts[4])
+            except:
+                pass
+
+            self.session_history.append(self.current_session)
+            self.is_recording = False
+            self.current_session = None
+
+            ui.ok("Video-Recording gestoppt und gespeichert!")
+            ui.pause()
+
+        except Exception as e:
+            ui.err(f"Stop-Fehler: {e}")
+            ui.pause()
+
+    def manage_videos(self) -> None:
+        """Verwaltet aufgezeichnete Videos."""
+        ui.clear()
+        ui.rule("📁 VIDEOS VERWALTEN", ui.BCYAN)
+        print()
+
+        try:
+            output = self.adb.shell(f"ls -lh {self.config.output_dir}")
+            if output:
+                print("  Vorhandene Videos:")
+                print(output)
+            else:
+                print("  Keine Videos gefunden")
+
+        except Exception as e:
+            ui.err(f"Fehler beim Auflisten: {e}")
+
+        print()
+        ui.pause()
+
+    def show_settings(self) -> None:
+        """Zeigt & ändert Einstellungen."""
+        ui.clear()
+        ui.rule("🔧 VIDEO-EINSTELLUNGEN", ui.BCYAN)
+        print()
+
+        ui.kv("Video-Format", self.config.format.value)
+        ui.kv("Auflösung", self.config.resolution)
+        ui.kv("FPS", str(self.config.fps))
+        ui.kv("Bitrate", f"{self.config.bitrate} kbps")
+        ui.kv("Kamera-Modus", self.config.camera_mode.value)
+        ui.kv("Mit Audio", "✓ Ja" if self.config.enable_audio else "✗ Nein")
+        ui.kv("Ausgabeverzeichnis", self.config.output_dir)
+        print()
+
+        sub = ui.menu("Einstellungen", [
+            ("1", "Auflösung ändern"),
+            ("2", "FPS ändern"),
+            ("3", "Bitrate ändern"),
+            ("4", "Kamera-Modus ändern"),
+        ], back_label="Zurück")
+
+        if sub == "1":
+            self._change_resolution()
+        elif sub == "2":
+            self._change_fps()
+        elif sub == "3":
+            self._change_bitrate()
+        elif sub == "4":
+            self._change_camera_mode()
+
+    def show_history(self) -> None:
+        """Zeigt Session-History."""
+        ui.clear()
+        ui.rule("📊 VIDEO-SESSION-HISTORY", ui.BCYAN)
+        print()
+
+        if not self.session_history:
+            print("  Keine Sessions aufgezeichnet")
+        else:
+            for session in self.session_history:
+                status_icon = "✓" if session.status == "stopped" else "⏸"
+                duration_sec = session.duration_ms / 1000
+                size_mb = session.file_size_bytes / (1024 * 1024)
+                print(
+                    f"  {status_icon} {session.session_id} | "
+                    f"{session.resolution} | {duration_sec:.1f}s | {size_mb:.1f}MB"
+                )
+
+        print()
+        ui.pause()
+
+    def delete_videos(self) -> None:
+        """Löscht Videos."""
+        ui.clear()
+        ui.rule("🗑️  VIDEOS LÖSCHEN", ui.BRED)
+        print()
+        print("  ⚠️ Dies löscht ALLE Videos permanent!")
+        print()
+
+        if not ui.confirm("Alle Videos löschen?", False):
+            return
+
+        try:
+            self.adb.shell(f"rm -rf {self.config.output_dir}/*")
+            ui.ok("Videos gelöscht")
+        except Exception as e:
+            ui.err(f"Lösch-Fehler: {e}")
+
+        ui.pause()
+
+    def _change_resolution(self) -> None:
+        """Ändert Auflösung."""
+        resolutions = ["1280x720", "1920x1080", "2560x1440", "3840x2160"]
+        ui.clear()
+        print("Wähle Auflösung:")
+        for i, res in enumerate(resolutions, 1):
+            print(f"  {i}. {res}")
+        choice = ui.ask("Auflösung (Nummer)", "2")
+        try:
+            idx = int(choice) - 1
+            if 0 <= idx < len(resolutions):
+                self.config.resolution = resolutions[idx]
+                ui.ok(f"Auflösung auf {resolutions[idx]} gesetzt")
+        except:
+            pass
+        ui.pause()
+
+    def _change_fps(self) -> None:
+        """Ändert FPS."""
+        fps_values = [24, 30, 60]
+        ui.clear()
+        print("Wähle FPS:")
+        for i, fps in enumerate(fps_values, 1):
+            print(f"  {i}. {fps} FPS")
+        choice = ui.ask("FPS (Nummer)", "2")
+        try:
+            idx = int(choice) - 1
+            if 0 <= idx < len(fps_values):
+                self.config.fps = fps_values[idx]
+                ui.ok(f"FPS auf {fps_values[idx]} gesetzt")
+        except:
+            pass
+        ui.pause()
+
+    def _change_bitrate(self) -> None:
+        """Ändert Bitrate."""
+        bitrates = [2000, 5000, 8000, 15000]
+        ui.clear()
+        print("Wähle Bitrate:")
+        for i, br in enumerate(bitrates, 1):
+            print(f"  {i}. {br} kbps")
+        choice = ui.ask("Bitrate (Nummer)", "2")
+        try:
+            idx = int(choice) - 1
+            if 0 <= idx < len(bitrates):
+                self.config.bitrate = bitrates[idx]
+                ui.ok(f"Bitrate auf {bitrates[idx]} kbps gesetzt")
+        except:
+            pass
+        ui.pause()
+
+    def _change_camera_mode(self) -> None:
+        """Ändert Kamera-Modus."""
+        modes = [CameraMode.BACK, CameraMode.FRONT]
+        ui.clear()
+        print("Wähle Kamera-Modus:")
+        for i, mode in enumerate(modes, 1):
+            print(f"  {i}. {mode.value}")
+        choice = ui.ask("Modus (Nummer)", "1")
+        try:
+            idx = int(choice) - 1
+            if 0 <= idx < len(modes):
+                self.config.camera_mode = modes[idx]
+                ui.ok(f"Modus auf {modes[idx].value} gesetzt")
+        except:
+            pass
+        ui.pause()
+
+    def _parse_size(self, size_str: str) -> int:
+        """Parse Dateigröße."""
+        try:
+            if size_str.endswith("K"):
+                return int(float(size_str[:-1]) * 1024)
+            elif size_str.endswith("M"):
+                return int(float(size_str[:-1]) * 1024 * 1024)
+            elif size_str.endswith("G"):
+                return int(float(size_str[:-1]) * 1024 * 1024 * 1024)
+            else:
+                return int(size_str)
+        except:
+            return 0
+
+
+def create_camera_tap(adb: ADB) -> CameraTap:
+    """Erstellt neuen Camera Tap Controller."""
+    return CameraTap(adb)

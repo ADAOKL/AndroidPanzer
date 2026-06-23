@@ -30,8 +30,8 @@ _RESTRICTED = "Auf modernen Android-Versionen oft nur mit Root/privilegierten Re
 
 
 CATEGORIES = [
-    # ============================================================= 1 · SYSTEM & HARDWARE
-    ("🔬", "System & Hardware-Diagnose", [
+    # ============================================================= 1
+    ("🔬", "System- & Hardware-Diagnose", [
         f(1, "Speicherauslastung (RAM + intern)", "cmd", "df -h; echo ---; dumpsys meminfo | head -n 45"),
         f(2, "CPU-Echtzeit (Frequenzen + Top-Prozesse)", "cmd",
           "top -n 1 -b -m 12 2>/dev/null | head -n 22; echo ---; "
@@ -50,8 +50,8 @@ CATEGORIES = [
           "uname -a; echo ---; getprop ro.build.fingerprint; getprop ro.build.version.security_patch"),
         f(10, "Audio-Status (Pegel/Geräte)", "cmd", "dumpsys audio | head -n 50"),
     ]),
-    # ============================================================= 2 · APPS & PAKETE
-    ("📱", "Apps & Paket-Management", [
+    # ============================================================= 2
+    ("📱", "App- & Paket-Management", [
         f(11, "App-Listen-Export (System/Drittanbieter)", "fn", h.app_list_export),
         f(12, "Sideloading (APK / Split-APK installieren)", "fn", h.install_apk),
         f(13, "App deinstallieren / deaktivieren (Bloatware)", "fn", h.uninstall_app),
@@ -63,8 +63,8 @@ CATEGORIES = [
         f(19, "App-Aktivitäten fuzzen (Monkey)", "fn", h.fuzz_intents),
         f(20, "App-Nutzungsstatistik (24h)", "cmd", "dumpsys usagestats | head -n 60"),
     ]),
-    # ============================================================= 3 · AUTOMATION & CONTROL
-    ("🎮", "UI-Automation & Remote Control", [
+    # ============================================================= 3
+    ("🎮", "Fernsteuerung & UI-Automation", [
         f(21, "Tap (Fingertipp auf X/Y)", "fn", h.tap),
         f(22, "Swipe / Scroll / Drag", "fn", h.swipe),
         f(23, "Texteingabe", "fn", h.text_input),
@@ -80,8 +80,8 @@ CATEGORIES = [
           "Echtes Multitouch erfordert Schreiben in /dev/input/eventX (Root). "
           "Einfache Gesten via 'input swipe' (Menü 22)."),
     ]),
-    # ============================================================= 4 · SYSTEM-KONFIGURATION
-    ("⚙️", "System-Konfiguration & Tweaks", [
+    # ============================================================= 4
+    ("⚙️", "System-Tweaks & Modding", [
         f(31, "Auflösung/DPI ändern", "ask", ("Größe z.B. 1080x2400 oder 'reset'", "wm size {v}"),
           "Danach ggf. 'wm density <dpi>' anpassen."),
         f(32, "Globaler Darkmode", "ask", ("yes / no / auto", "cmd uimode night {v}")),
@@ -105,8 +105,8 @@ CATEGORIES = [
         f(40, "Lade-Limitierung (z.B. 80%)", "info",
           _NEED_ROOT + " Pfad geräteabhängig: /sys/class/power_supply/battery/charge_control_limit o.ä."),
     ]),
-    # ============================================================= 5 · DATEI & MEDIEN
-    ("🛠️", "Datei-Transfer & Medien", [
+    # ============================================================= 5
+    ("🛠️", "Datei-Transfer, Medien & Forensik", [
         f(41, "High-Speed Backup (adb pull)", "fn", h.pull_files),
         f(42, "Datei-Upload (adb push)", "fn", h.push_files),
         f(43, "Screenshot → PC (PNG)", "fn", h.screenshot),
@@ -119,8 +119,8 @@ CATEGORIES = [
         f(49, "Prozess-Kill-Switch (Hänger beenden)", "ask", ("Paket/Prozess", "am force-stop {v}; pkill -f {v}")),
         f(50, "Reboot-Steuerung (Recovery/Bootloader/…)", "fn", h.reboot_menu),
     ]),
-    # ============================================================= 6 · PARTITIONEN & IMAGING
-    ("💾", "Partitionen, Images & Boot", [
+    # ============================================================= 6
+    ("💾", "Partitionen, Images & Low-Level-Forensik", [
         f(51, "EMMC/UFS-Partition dumpen (dd → img)", "rootcmd",
           "ls -l /dev/block/by-name/", _NEED_ROOT + " Dump-Beispiel: dd if=/dev/block/by-name/system of=/sdcard/system.img"),
         f(52, "Partitionstabelle auslesen", "cmd", "ls -l /dev/block/by-name/ 2>/dev/null || ls -l /dev/block/bootdevice/by-name/"),
@@ -142,8 +142,8 @@ CATEGORIES = [
         f(60, "Slot A/B Status (bootctl)", "cmd",
           "getprop ro.boot.slot_suffix; bootctl get-current-slot 2>/dev/null; bootctl get-suffix 0 2>/dev/null"),
     ]),
-    # ============================================================= 7 · NETZWERK & TRAFFIC
-    ("🌐", "Netzwerk, Proxy & Traffic", [
+    # ============================================================= 7
+    ("🌐", "Netzwerk, Proxy & Traffic-Analyse", [
         f(61, "Globalen Proxy setzen (Burp/mitmproxy)", "fn", h.set_proxy),
         f(62, "Reverse Port Forwarding (PC-Net teilen)", "fn", h.port_forward),
         f(63, "Port Forwarding (Geräte-Port → PC)", "fn", h.port_forward),
@@ -159,8 +159,8 @@ CATEGORIES = [
           "Auf dem Gerät selbst ohne Root nicht steuerbar."),
         f(70, "VPN-Profil triggern", "cmd", "am start -a android.settings.VPN_SETTINGS"),
     ]),
-    # ============================================================= 8 · PERFORMANCE & BATTERY
-    ("⚡", "Performance & Battery-Profiling", [
+    # ============================================================= 8
+    ("⚡", "Performance-Profiling & Stresstests", [
         f(71, "FPS / Frame-Drops (gfxinfo)", "ask", ("Paketname", "dumpsys gfxinfo {v} | head -n 60")),
         f(72, "Thermal / Throttling", "cmd",
           "dumpsys thermalservice | head -n 40; echo ---; "
@@ -179,8 +179,8 @@ CATEGORIES = [
         f(79, "GPU-Rendering-Profil (Balken am Display)", "ask", ("'visual_bars' / 'false'", "setprop debug.hwui.profile {v}")),
         f(80, "Zombie-/Hänger-Prozesse killen", "cmd", "ps -A -o PID,STAT,NAME 2>/dev/null | grep -E ' Z ' || echo 'Keine Zombies.'"),
     ]),
-    # ============================================================= 9 · SICHERHEIT & AUDIT
-    ("🛡️", "Sicherheit & Exploit-Audit", [
+    # ============================================================= 9
+    ("🛡️", "Security-Auditing & App-Sicherheit", [
         f(81, "CA-Zertifikat installieren (SSL-Interception)", "fn", h.install_cert),
         f(82, "App-Signatur (MD5/SHA256-Fingerprint)", "ask",
           ("Paketname", "pm dump {v} | grep -iA2 'signatures'; echo ---; dumpsys package {v} | grep -i 'signing'")),
@@ -690,9 +690,3 @@ def kind_stats() -> dict:
         for ft in feats:
             stats[ft["k"]] = stats.get(ft["k"], 0) + 1
     return stats
-
-
-# Flatten all features into single registry
-REG = []
-for _, _, feats in CATEGORIES:
-    REG.extend(feats)

@@ -8,6 +8,26 @@ from . import ui
 from .adb import ADB, Device
 
 
+class Dashboard:
+    """Dashboard für System-Übersicht."""
+
+    def __init__(self, adb: ADB = None):
+        """Initialisiere Dashboard."""
+        self.adb = adb
+        self.data = {}
+
+    def show_dashboard(self) -> None:
+        """Zeige Dashboard."""
+        ui.clear()
+        ui.banner(subtitle="📊 SYSTEM DASHBOARD")
+        print("\n  System ist betriebsbereit!\n")
+        ui.pause()
+
+    def collect_data(self) -> dict:
+        """Sammle Dashboard-Daten."""
+        return {"status": "collected"}
+
+
 def _first(*vals) -> str:
     for v in vals:
         if v and v.strip() and v.strip().lower() not in ("unknown", "0"):

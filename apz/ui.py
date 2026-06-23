@@ -27,29 +27,30 @@ BOLD = _c("\033[1m")
 DIM = _c("\033[2m")
 BLINK = _c("\033[5m")       # Pulsieren (ANSI-Blink) für kritische Treffer
 
-# ───────────────  EVIL · DEEP NEON RED THEME  ───────────────
-NEON = _t(255, 26, 60)      # Hauptakzent – Neon-Blutrot
-NEONB = _t(255, 70, 96)     # heller Glow
-CRIMSON = _t(196, 10, 38)   # Crimson
-BLOOD = _t(110, 0, 20)      # dunkle Rahmen
-DARKRED = _t(70, 4, 14)     # Schatten
+# ───────────────  DARK BLACK-GRAY THEME  ───────────────
+NEON = _t(180, 190, 200)    # Hauptakzent – helles Grau
+NEONB = _t(210, 220, 230)   # noch heller Grau
+CRIMSON = _t(150, 160, 170) # mittleres Grau
+BLOOD = _t(40, 45, 55)      # sehr dunkles Grau
+DARKRED = _t(20, 22, 28)    # fast schwarz
 
-# Chrome (zuvor cyan/blau/magenta) → komplett auf Rot umgemappt
-CYAN = NEON
-BCYAN = NEONB
-BLUE = CRIMSON
-BBLUE = NEONB
-MAGENTA = _t(255, 0, 92)
+# Chrome (cyan/blau) → graue Töne
+CYAN = _t(160, 170, 180)
+BCYAN = _t(200, 210, 220)
+BLUE = _t(140, 150, 160)
+BBLUE = _t(180, 190, 200)
+MAGENTA = _t(120, 130, 140)
+BMAGENTA = _t(200, 150, 200)  # helles Magenta
 
-# Status – bewusst lesbar gehalten
-RED = _t(255, 45, 55)
-BRED = _t(255, 80, 80)
-GREEN = _t(0, 224, 120)
-BGREEN = _t(64, 255, 150)
-YELLOW = _t(255, 168, 38)
-BYELLOW = _t(255, 198, 70)
-WHITE = _t(235, 230, 232)
-GREY = _t(120, 84, 90)      # rötliches Grau, damit auch Dim-Text im Theme bleibt
+# Status – graue Abstufungen
+RED = _t(170, 50, 50)       # dunkles Rot (Fehler)
+BRED = _t(200, 100, 100)    # helleres Rot
+GREEN = _t(80, 160, 100)    # gedämpftes Grün (Erfolg)
+BGREEN = _t(120, 200, 140)  # helleres Grün
+YELLOW = _t(200, 160, 80)   # gedämpftes Gelb (Warnung)
+BYELLOW = _t(230, 190, 120) # helleres Gelb
+WHITE = _t(200, 200, 200)   # hell-grau
+GREY = _t(100, 110, 120)    # mittleres Grau
 
 
 def width() -> int:
@@ -73,7 +74,7 @@ def banner(subtitle: str = "") -> None:
         r"  ░██▄▄▄▄██ ▓██▒  ▐▌██▒░▓█▄   ▌▒██▀▀█▄  ▒██   ██░░██░░▓█▄   ▌",
         r"   ▓█   ▓██▒▒██░   ▓██░░▒████▓ ░██▓ ▒██▒░ ████▓▒░░██░░▒████▓ ",
     ]
-    # Glow-Schichten: dunkle Kontur → Crimson → Neon-Spitze (von oben nach unten)
+    # Grau-Schichten: dunkelster Grau → mittlerer → hellster (von oben nach unten)
     glow = [DARKRED, BLOOD, CRIMSON, NEON, NEONB]
     bar = "▬" * (w - 1)
     spike = "▰▱" * ((w - 1) // 2)
@@ -82,11 +83,11 @@ def banner(subtitle: str = "") -> None:
     for i, ln in enumerate(art):
         print(f"{BOLD}{glow[i % len(glow)]}{ln}{RESET}")
     print(f"{BLOOD}{bar}{RESET}")
-    title = (f"  {BOLD}{NEONB}☠{RESET}  {BOLD}{NEON}A N D R O I D   P A N Z E R{RESET}  "
-             f"{BOLD}{NEONB}☠{RESET}   {DIM}{CRIMSON}// total device dominance{RESET}")
+    title = (f"  {BOLD}{NEONB}◆{RESET}  {BOLD}{NEON}A N D R O I D   P A N Z E R{RESET}  "
+             f"{BOLD}{NEONB}◆{RESET}   {DIM}{CRIMSON}// total device dominance{RESET}")
     print(title)
     if subtitle:
-        print(f"  {BRED}▸▸{RESET} {BOLD}{WHITE}{subtitle}{RESET}")
+        print(f"  {CYAN}▸▸{RESET} {BOLD}{WHITE}{subtitle}{RESET}")
     print(f"{BLOOD}{bar}{RESET}")
 
 
@@ -259,7 +260,7 @@ def progress(done: int, total: int, label: str = "", width: int = 28) -> None:
     total = max(1, total)
     frac = min(1.0, max(0.0, done / total))
     filled = int(frac * width)
-    bar = f"{NEON}{'█' * filled}{GREY}{'░' * (width - filled)}{RESET}"
+    bar = f"{BCYAN}{'█' * filled}{GREY}{'░' * (width - filled)}{RESET}"
     sys.stdout.write(f"\r  {bar} {BOLD}{int(frac * 100):3d}%{RESET}  {GREY}{label[:46]}{RESET}\033[K")
     sys.stdout.flush()
     if done >= total:
@@ -275,13 +276,13 @@ def progress_bytes(done: int, total: int, label: str = "", width: int = 28) -> N
     if total and total > 0:
         frac = min(1.0, done / total)
         filled = int(frac * width)
-        bar = f"{NEON}{'█' * filled}{GREY}{'░' * (width - filled)}{RESET}"
+        bar = f"{BCYAN}{'█' * filled}{GREY}{'░' * (width - filled)}{RESET}"
         line = f"\r  {bar} {BOLD}{int(frac * 100):3d}%{RESET}  {GREY}{mb:.1f}/{total/1048576:.1f} MB {label[:30]}{RESET}\033[K"
         sys.stdout.write(line)
         if done >= total:
             sys.stdout.write("\n")
     else:
-        sys.stdout.write(f"\r  {NEON}⟳{RESET} {mb:.1f} MB  {GREY}{label[:40]}{RESET}\033[K")
+        sys.stdout.write(f"\r  {BCYAN}⟳{RESET} {mb:.1f} MB  {GREY}{label[:40]}{RESET}\033[K")
     sys.stdout.flush()
 
 
@@ -289,7 +290,7 @@ def scan_start(i: int, total: int, label: str) -> None:
     """Zeigt 'läuft gerade' für den aktuellen Bereich (überschreibbar)."""
     if _NO_COLOR:
         return
-    sys.stdout.write(f"\r  {GREY}[{i:>2}/{total}]{RESET} {NEON}⟳{RESET} {BOLD}{label}{RESET} … ")
+    sys.stdout.write(f"\r  {GREY}[{i:>2}/{total}]{RESET} {BCYAN}⟳{RESET} {BOLD}{label}{RESET} … ")
     sys.stdout.flush()
 
 

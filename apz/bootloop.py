@@ -249,7 +249,8 @@ def _udev_thread(stop: threading.Event) -> None:
 # --------------------------------------------------------------------- #
 #  Haupt-Monitor
 # --------------------------------------------------------------------- #
-def monitor() -> None:
+def _live_monitor() -> None:
+    """Kern-Bootloop-Monitor (lsusb-Polling, udev, Log-Grab)."""
     ui.clear()
     ui.banner(subtitle="📉 Bootloop-Live-Monitor")
     ui.info("Beobachtet USB-Enumerations-Zyklen in Echtzeit. Gerät jetzt einstecken "
@@ -318,6 +319,266 @@ def monitor() -> None:
         print()
         _summary(cycles, appear)
         ui.pause()
+
+
+def _rescue_plan(avg: float) -> None:
+    """Rettungsplan basierend auf der Zyklusdauer."""
+    ui.clear()
+    ui.rule("🚑 BOOTLOOP RETTUNGSPLAN", ui.BYELLOW)
+    cls, reason = classify_cycle(avg)
+    print(f"\n  Diagnose: {cls}")
+    print(f"  Ursache:  {ui.GREY}{reason}{ui.RESET}\n")
+
+    if avg >= 30:
+        print(f"  {ui.BOLD}Klasse: OS-Loop (bestes Szenario – meist reparierbar){ui.RESET}\n")
+        steps = [
+            ("1", "Safe-Mode testen",
+             "Beim Hochfahren Vol-Runter halten → im Safe-Mode App deinstallieren die evtl. schuld ist"),
+            ("2", "Cache-Partition wipen (TWRP)",
+             "Recovery → Wipe → Advanced Wipe → Cache + Dalvik/ART Cache\n"
+             "     (KEINE Daten gelöscht – Dalvik/Cache-Neuaufbau erzwingen)"),
+            ("3", "A/B-Slot wechseln (neuere Geräte)",
+             "fastboot set_active other\n     fastboot reboot\n     (auf den anderen System-Slot starten)"),
+            ("4", "Letztes OTA-Update zurückrollen",
+             "fastboot --set-active=a / fastboot --set-active=b\n"
+             "     ODER: fastboot flash system system_backup.img"),
+            ("5", "Stock-ROM per Fastboot/Odin wiederherstellen",
+             "Passendes Stock-ROM herunterladen → fastboot flash all oder Odin (Samsung)"),
+        ]
+    elif avg >= 15:
+        print(f"  {ui.BOLD}Klasse: Kernel/Frühboot-Loop{ui.RESET}\n")
+        steps = [
+            ("1", "dm-verity deaktivieren",
+             "fastboot flash vbmeta --disable-verity --disable-verification vbmeta.img\n"
+             "     fastboot reboot"),
+            ("2", "Stock-Recovery flashen",
+             "fastboot flash recovery stock_recovery.img\n"
+             "     fastboot reboot recovery → cache wipe"),
+            ("3", "TWRP flashen und System prüfen",
+             "fastboot flash recovery twrp.img → Mount System → Dateisystem-Check"),
+            ("4", "Stock-ROM vollständig wiederherst.",
+             "Hersteller-Fastboot-ROM + flash-all.sh (Pixel) oder Odin (Samsung)"),
+        ]
+    elif avg >= 3:
+        print(f"  {ui.BOLD}Klasse: Bootloader-Loop (Signaturproblem){ui.RESET}\n")
+        steps = [
+            ("1", "Bootloader-Signatur-Fehler beheben",
+             "fastboot flashing unlock (falls noch nicht entsperrt)\n"
+             "     fastboot flash vbmeta --disable-verity vbmeta.img"),
+            ("2", "OEM-Unlock-Status prüfen",
+             "fastboot getvar unlocked → muss 'yes' sein\n"
+             "     Sonst: OEM-Unlock via Hersteller-Tool (Xiaomi Mi Unlock, etc.)"),
+            ("3", "Bootloader flashen",
+             "fastboot flash bootloader bootloader.img\n"
+             "     fastboot reboot-bootloader"),
+            ("4", "Komplettes Werks-ROM",
+             "Alle Partitionen (bootloader+radio+system) neu flashen"),
+        ]
+    else:
+        print(f"  {ui.BOLD}Klasse: Hardware-Loop (kein Software-Fix){ui.RESET}\n")
+        steps = [
+            ("1", "Netzteil/Akku prüfen",
+             "Anderen Akku testen. PMIC-Fehler oft bei Drittanbieter-Akkus.\n"
+             "     Direktes Laden über USB-C-Buchse (kein Hub)"),
+            ("2", "Power-Button-Klemmer",
+             "Gerät ohne eingelegten Akku starten → reagiert es auf USB?\n"
+             "     Klemmt Power-Taste physisch fest?"),
+            ("3", "Kurzschluss / Mainboard",
+             "Mit Labornetzteil Stromaufnahme messen (normal: <0.5A im Boot-Versuch)\n"
+             "     Bei >2A sofort → Kurzschluss auf Mainboard"),
+            ("4", "EDL-Modus erzwingen",
+             "Qualcomm: EDL-Testpoint kurzschließen → 05c6:9008 erscheint\n"
+             "     Via QFIL/EDL-Tool Stock-ROM flashen"),
+        ]
+
+    for nr, title, desc in steps:
+        print(f"  {ui.BGREEN}Schritt {nr}: {title}{ui.RESET}")
+        for line in desc.split("\n"):
+            print(f"     {ui.GREY}{line}{ui.RESET}")
+        print()
+
+
+def _log_analysis() -> None:
+    """Gespeicherte Bootloop-Logs analysieren."""
+    import glob
+    ui.clear()
+    ui.rule("📋 BOOTLOOP LOG-ANALYSE", ui.BCYAN)
+    log_dir = OUT
+    logs = sorted(glob.glob(os.path.join(log_dir, "*.txt")))
+    if not logs:
+        ui.warn(f"Keine Logs in {log_dir}")
+        ui.info("Bootloop-Monitor starten → Gerät einstecken → Logs werden automatisch gesammelt.")
+        ui.pause(); return
+    print(f"\n  {len(logs)} Log-Datei(en) gefunden:\n")
+    for i, p in enumerate(logs[-10:], 1):
+        size = os.path.getsize(p)
+        mtime = os.path.getmtime(p)
+        import time as _time
+        ts = _time.strftime("%Y-%m-%d %H:%M", _time.localtime(mtime))
+        print(f"  {i:2}. {os.path.basename(p):40s}  {size//1024:4d} KB  {ts}")
+    print()
+    idx_str = ui.ask("Datei-Nr. analysieren (oder Enter = neueste)")
+    if not idx_str:
+        path = logs[-1]
+    else:
+        try:
+            path = logs[int(idx_str) - 1]
+        except (ValueError, IndexError):
+            path = logs[-1]
+    print(f"\n  Analysiere: {os.path.basename(path)}\n")
+    with open(path, encoding="utf-8", errors="replace") as f:
+        content = f.read()
+    hits = _fatal_lines(content)
+    if hits:
+        ui.warn(f"{len(hits)} kritische Zeile(n) gefunden:")
+        for h in hits[:20]:
+            print(f"  {ui.BRED}‼{ui.RESET} {h[:120]}")
+    else:
+        ui.ok("Keine kritischen FATAL/PANIC-Zeilen gefunden.")
+    print()
+    # Keyword-Statistik
+    keywords = {
+        "Fatal/Panic": re.findall(r"FATAL|kernel panic|Fatal signal", content, re.I),
+        "Crashes":     re.findall(r"crashed|force.closed|ANR", content, re.I),
+        "OOM":         re.findall(r"out of memory|lowmemkiller", content, re.I),
+        "dm-verity":   re.findall(r"verity|dm-verity", content, re.I),
+        "Zygote":      re.findall(r"zygote", content, re.I),
+        "Thermal":     re.findall(r"thermal|temperature|overheat", content, re.I),
+    }
+    ui.rule("Statistik", ui.GREY)
+    for k, v in keywords.items():
+        if v:
+            ui.kv(k, str(len(v)) + " Treffer")
+    ui.pause()
+
+
+def _solution_db() -> None:
+    """Bootloop-Lösungsdatenbank (offline, nach Fehlerklasse)."""
+    ui.clear()
+    ui.rule("📚 BOOTLOOP LÖSUNGSDATENBANK", ui.BCYAN)
+    entries = {
+        "1": ("dm-verity / Verified Boot Fehler",
+              ["fastboot flash vbmeta --disable-verity --disable-verification vbmeta.img",
+               "fastboot reboot",
+               "Tritt auf wenn: Custom-ROM ohne passendes vbmeta, Signaturmismatch"]),
+        "2": ("Zygote / SystemServer Crash",
+              ["adb reboot recovery → Wipe → Cache + Dalvik/ART Cache",
+               "Wenn Crash in bestimmter App: Safe-Mode → App deinstallieren",
+               "Letzte APK aus unbekannter Quelle entfernen"]),
+        "3": ("PMIC / Power-Problem",
+              ["Anderen Akku testen (PMIC überlastet durch defekten BMS-Chip)",
+               "Labornetzteil: >2A → Kurzschluss suchen",
+               "Power-Button physisch klemmt → Taste isolieren/reinigen"]),
+        "4": ("Fehlerhafter Flash / falsches ROM",
+              ["Richtigen ROM für EXAKT diesen Codename flashen",
+               "Bei Samsung: kein Fastboot verwenden → Odin/Heimdall + Download-Modus",
+               "Alle Partitionen neu flashen (nicht nur system)"]),
+        "5": ("Kernel-Panik / Treiber-Fehler",
+              ["Stock-Kernel flashen: fastboot flash boot stock_boot.img",
+               "Keine Custom-Kernel mit falschem Treiber-Set",
+               "Zertifizierte Builds (avoid developer/unofficial builds)"]),
+        "6": ("A/B-Partition – schlechter Slot",
+              ["fastboot set_active other → auf den anderen Slot wechseln",
+               "fastboot reboot",
+               "Funktioniert bei: Pixel, neuere Samsung, OnePlus 8+"]),
+        "7": ("Verschlüsselung / FBE-Fehler",
+              ["Nur nach Wipe verwendbar wenn FBE aktiv",
+               "Recovery → Format Data (NICHT nur cache wipe!)",
+               "WARNUNG: Alle Daten werden gelöscht"]),
+        "8": ("Bootloader-Lock / Anti-Rollback",
+              ["Anti-Rollback: ältere Versionen NICHT flashen → permanenter Brick möglich",
+               "Bootloader muss für Custom-ROMs entsperrt sein",
+               "fastboot getvar all → rollback-index prüfen"]),
+    }
+    ch = ui.menu("Fehlerklasse", [(k, v[0]) for k, v in entries.items()], back_label="Zurück")
+    if ch in ("back", "quit"):
+        return
+    if ch in entries:
+        title, steps = entries[ch]
+        print(f"\n  {ui.BOLD}{title}{ui.RESET}\n")
+        for i, s in enumerate(steps, 1):
+            print(f"  {i}. {ui.GREY}{s}{ui.RESET}")
+        print()
+    ui.pause()
+
+
+def _usb_detect_test() -> None:
+    """Einmalige USB-Erkennung (ohne Loop)."""
+    ui.clear()
+    ui.rule("🔌 USB GERÄTE-ERKENNUNG", ui.BCYAN)
+    print(f"\n  {ui.GREY}Erkennt alle angeschlossenen Android-Geräte (lsusb + ADB){ui.RESET}\n")
+    import subprocess as sp
+    # lsusb
+    try:
+        lsusb = sp.run(["lsusb"], capture_output=True, text=True, timeout=5).stdout
+        android_lines = [l for l in lsusb.splitlines()
+                         if any(v in l.lower() for v in
+                                ["android", "samsung", "google", "qualcomm", "mediatek",
+                                 "04e8", "18d1", "05c6", "0e8d"])]
+        if android_lines:
+            ui.ok(f"{len(android_lines)} Android-Gerät(e) via lsusb erkannt:")
+            for l in android_lines:
+                print(f"  {ui.GREY}{l}{ui.RESET}")
+        else:
+            ui.warn("Kein Android-Gerät via lsusb erkannt.")
+    except Exception:
+        ui.warn("lsusb nicht verfügbar.")
+    print()
+    # ADB
+    try:
+        adb_out = sp.run(["adb", "devices"], capture_output=True, text=True, timeout=5).stdout
+        devs = [l for l in adb_out.splitlines()[1:] if l.strip() and "List" not in l]
+        if devs:
+            ui.ok(f"{len(devs)} Gerät(e) via ADB erkannt:")
+            for d in devs:
+                print(f"  {ui.BGREEN}▸{ui.RESET} {d}")
+        else:
+            ui.warn("Kein Gerät via ADB erkannt (USB-Debugging aktiv?)")
+    except Exception:
+        ui.warn("adb nicht verfügbar.")
+    print()
+    # Fastboot
+    try:
+        fb_out = sp.run(["fastboot", "devices"], capture_output=True, text=True, timeout=5).stdout
+        if fb_out.strip():
+            ui.ok(f"Fastboot-Gerät erkannt: {fb_out.strip()}")
+        else:
+            ui.info("Kein Gerät im Fastboot-Modus.")
+    except Exception:
+        ui.info("fastboot nicht verfügbar.")
+    ui.pause()
+
+
+def monitor() -> None:
+    """Bootloop-Menü — Einstiegspunkt für [42] im Hauptmenü."""
+    while True:
+        ui.clear()
+        ui.banner(subtitle="📡 Bootloop-Monitor & Diagnose")
+        ch = ui.menu("Aktion", [
+            ("1", "📉 Live-Monitor            (USB-Zyklen in Echtzeit messen)"),
+            ("2", "🚑 Rettungsplan            (basierend auf gemessener Zyklusdauer)"),
+            ("3", "📋 Log-Analyse             (gespeicherte bootloop-Logs auswerten)"),
+            ("4", "📚 Lösungsdatenbank        (Fehlerklasse → Schritt-für-Schritt-Fix)"),
+            ("5", "🔌 USB-Geräte erkennen     (einmalige Schnell-Erkennung)"),
+        ], back_label="Zurück")
+        if ch in ("back", "quit"):
+            return
+        if ch == "1":
+            _live_monitor()
+        elif ch == "2":
+            avg_s = ui.ask("Ø Zyklusdauer in Sekunden (z.B. 8.5 oder aus Live-Monitor)").strip()
+            try:
+                avg = float(avg_s)
+                _rescue_plan(avg)
+            except ValueError:
+                ui.err("Ungültige Zahl.")
+            ui.pause()
+        elif ch == "3":
+            _log_analysis()
+        elif ch == "4":
+            _solution_db()
+        elif ch == "5":
+            _usb_detect_test()
 
 
 def _summary(cycles: list[float], appear: int) -> None:

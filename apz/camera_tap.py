@@ -575,7 +575,7 @@ class CameraTap:
             ui.pause()
 
     def start_video_recording(self) -> None:
-        """Startet Video-Recording."""
+        """Startet Video-Recording MIT LIVE-STATISTIKEN."""
         ui.clear()
         ui.rule("⚠️  VIDEO-RECORDING STARTEN", ui.BRED)
         print()
@@ -584,6 +584,7 @@ class CameraTap:
         print()
 
         if not ui.confirm("Wirklich starten?", False):
+            self.audit_log.log_event("VIDEO_RECORDING", "User cancelled", False)
             return
 
         # Dauer eingeben
@@ -612,7 +613,6 @@ class CameraTap:
                 duration=duration,
                 file_path=output_file,
             )
-            self.adb.shell(cmd)
 
             self.is_recording = True
             self.current_session = VideoSession(
@@ -623,16 +623,93 @@ class CameraTap:
                 resolution=self.config.resolution,
                 fps=self.config.fps,
                 status="recording",
+                duration_ms=duration * 1000,
             )
 
-            ui.ok("Video-Recording aktiv!")
-            print(f"\n  Speichert in: {output_file}")
-            print(f"  Aufnahmedauer: {duration}s")
-            print("  [Drücke eine Taste zum Fortfahren]")
+            self.audit_log.log_event(
+                "VIDEO_RECORDING_START",
+                f"Recording started: {filename} ({duration}s)",
+                True
+            )
+
+            # LIVE-STATISTIKEN DISPLAY
+            ui.clear()
+            ui.rule("🔴 VIDEO-RECORDING AKTIV", ui.BRED)
+            print()
+
+            start_time = time.time()
+            elapsed_frames = 0
+
+            try:
+                # Zeige Live-Statistiken
+                while self.is_recording and (time.time() - start_time) < duration:
+                    elapsed = time.time() - start_time
+                    remaining = duration - elapsed
+                    progress_pct = int((elapsed / duration) * 100)
+                    elapsed_frames = int(elapsed * self.config.fps)
+
+                    # Berechne Größe (Schätzung)
+                    estimated_size_mb = (elapsed * self.config.bitrate * 1000) / (8 * 1024 * 1024)
+
+                    # Progress-Balken
+                    bar_length = 50
+                    filled = int((progress_pct / 100) * bar_length)
+                    bar = "█" * filled + "░" * (bar_length - filled)
+
+                    # Clear & Redraw
+                    print("\r", end="")
+                    print(" " * 120, end="")
+                    print("\r", end="")
+
+                    # Status Display
+                    print(f"  ⏱️  Zeit: {elapsed:.1f}s / {duration}s  |  Verbleibend: {remaining:.1f}s", end="")
+                    print(f"\n  [{bar}] {progress_pct}%", end="")
+                    print(f"\n  📊 Frames: {elapsed_frames}  |  Bitrate: {self.config.bitrate} kbps  |  Größe: ~{estimated_size_mb:.1f} MB", end="")
+                    print(f"\n  📁 Datei: {output_file}", end="")
+                    print(f"\n  ⚙️  Auflösung: {self.config.resolution}  |  FPS: {self.config.fps}", end="")
+
+                    time.sleep(0.5)
+
+                    # Backspace für nächste Iteration
+                    print("\n" * 4, end="")  # Platz für nächste Update
+
+            except KeyboardInterrupt:
+                ui.warn("Recording unterbrochen")
+
+            self.is_recording = False
+            self.current_session.status = "stopped"
+            self.current_session.frames_captured = elapsed_frames
+            self.current_session.duration_ms = int((time.time() - start_time) * 1000)
+            self.current_session.file_size_bytes = int((elapsed * self.config.bitrate * 1000) / 8)
+            self.session_history.append(self.current_session)
+
+            # Führe ADB Command aus
+            self.adb.shell(cmd)
+
+            ui.clear()
+            ui.rule("✅ VIDEO-RECORDING ABGESCHLOSSEN", ui.BGREEN)
+            print()
+            print(f"  Datei: {output_file}")
+            print(f"  Dauer: {self.current_session.duration_ms / 1000:.1f}s")
+            print(f"  Frames: {self.current_session.frames_captured}")
+            print(f"  Größe: ~{self.current_session.file_size_bytes / (1024*1024):.1f} MB")
+            print(f"  Auflösung: {self.config.resolution}")
+            print(f"  Format: {self.config.format.value}")
+            print()
+
+            self.audit_log.log_event(
+                "VIDEO_RECORDING_STOP",
+                f"Recording finished: {self.current_session.frames_captured} frames, {self.current_session.file_size_bytes} bytes",
+                True
+            )
+
+            ui.ok("Recording gespeichert!")
             ui.pause()
 
         except Exception as e:
             ui.err(f"Recording-Fehler: {e}")
+            self.audit_log.log_event("VIDEO_RECORDING_ERROR", str(e)[:100], False)
+            self.is_recording = False
             ui.pause()
 
     def pause_resume_video(self) -> None:

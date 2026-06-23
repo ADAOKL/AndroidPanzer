@@ -576,6 +576,436 @@ def deep_risk_menu(adb: ADB, dev, st) -> None:
 
 
 # ========================================================================== #
+#  6. Tiefen-String-Scan (URLs / E-Mails / Base64 / API-Keys / IPs)
+# ========================================================================== #
+
+_RE_EMAIL  = re.compile(rb"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
+_RE_B64    = re.compile(rb"[A-Za-z0-9+/]{32,}={0,2}")
+_RE_APIKEY = re.compile(
+    rb"(?:api[_-]?key|apikey|secret|token|access[_-]?key|auth[_-]?key)"
+    rb"[\"':\s=]+([A-Za-z0-9+/._-]{16,})", re.IGNORECASE)
+
+
+def _extract_deep_strings(apk_path: str) -> dict:
+    """Extrahiert URLs, E-Mails, IPs, Base64-Blobs und API-Key-Kandidaten aus APK."""
+    urls: set = set()
+    emails: set = set()
+    ips: set = set()
+    b64: list = []
+    apikeys: list = []
+    try:
+        with zipfile.ZipFile(apk_path) as zf:
+            entries = [n for n in zf.namelist() if n.endswith((".dex", ".js", ".xml", ".json", ".properties"))]
+            for name in entries[:10]:
+                try:
+                    data = zf.read(name)
+                except (KeyError, OSError):
+                    continue
+                for m in RE_URL.findall(data)[:3000]:
+                    u = m.decode("ascii", "replace")
+                    if not any(d in u for d in IOC_DENY):
+                        urls.add(u)
+                for m in RE_IP.findall(data)[:3000]:
+                    ip = m.decode("ascii", "replace")
+                    if not ip.startswith(("127.", "0.", "255.", "10.")):
+                        ips.add(ip)
+                for m in _RE_EMAIL.findall(data)[:500]:
+                    emails.add(m.decode("ascii", "replace"))
+                for m in _RE_B64.findall(data)[:200]:
+                    try:
+                        import base64 as _b64
+                        dec = _b64.b64decode(m + b"==").decode("utf-8", "replace")
+                        if sum(c.isprintable() for c in dec[:30]) > 20:
+                            b64.append((m.decode("ascii", "replace")[:40], dec[:80]))
+                    except Exception:  # noqa: BLE001
+                        pass
+                for m in _RE_APIKEY.findall(data)[:50]:
+                    apikeys.append(m.decode("ascii", "replace")[:60])
+    except Exception as e:  # noqa: BLE001
+        return {"error": str(e)}
+    return {
+        "urls":    sorted(urls)[:300],
+        "emails":  sorted(emails)[:100],
+        "ips":     sorted(ips)[:100],
+        "b64":     b64[:30],
+        "apikeys": list(set(apikeys))[:30],
+    }
+
+
+def deep_string_scan(adb: ADB, dev, st) -> None:
+    path = os.path.expanduser(ui.ask("Pfad zur APK (oder leer für installierte App)").strip())
+    if not path:
+        pkg = ui.ask("Paketname").strip()
+        if not pkg:
+            return
+        paths = [ln.split("package:", 1)[1].strip()
+                 for ln in adb.shell(f"pm path {pkg}").splitlines() if "package:" in ln]
+        if not paths:
+            ui.err("Kein APK-Pfad."); ui.pause(); return
+        base = next((x for x in paths if x.endswith("base.apk")), paths[0])
+        path = os.path.join(OUT, f"ds_{pkg}.apk")
+        adb.raw(["pull", base, path], timeout=300)
+    if not os.path.isfile(path):
+        ui.err("Datei nicht gefunden."); ui.pause(); return
+    ui.info("Analysiere Strings (URLs/E-Mails/Base64/API-Keys) …")
+    res = _extract_deep_strings(path)
+    if "error" in res:
+        ui.err(res["error"]); ui.pause(); return
+    out = [f"# STRING-TIEFENSCAN: {path}", f"# {time.strftime('%Y-%m-%d %H:%M:%S')}", ""]
+    out += [f"== URLS ({len(res['urls'])}) =="] + [f"  {u}" for u in res["urls"]] + [""]
+    out += [f"== IPS ({len(res['ips'])}) =="] + [f"  {ip}" for ip in res["ips"]] + [""]
+    out += [f"== E-MAILS ({len(res['emails'])}) =="] + [f"  {e}" for e in res["emails"]] + [""]
+    if res["apikeys"]:
+        out += [f"== API-KEY-KANDIDATEN ({len(res['apikeys'])}) ACHTUNG! =="] + \
+               [f"  {k}" for k in res["apikeys"]] + [""]
+    if res["b64"]:
+        out += [f"== BASE64-KANDIDATEN ({len(res['b64'])}) =="] + \
+               [f"  {r[0]} → {r[1]}" for r in res["b64"]] + [""]
+    body = "\n".join(out) + "\n"
+    p = os.path.join(OUT, f"strings_{int(time.time())}.txt")
+    with open(p, "w", encoding="utf-8") as f:
+        f.write(body)
+    ui.show_report(body, "String-Tiefenscan", p)
+    ui.pause()
+
+
+# ========================================================================== #
+#  7. Zertifikat-Analyse
+# ========================================================================== #
+
+def _parse_cert_info(raw: bytes) -> str:
+    """Extrahiert lesbare Strings aus einem DER/PEM-Zertifikat (ohne cryptography-Lib)."""
+    lines = []
+    # Aus dem Rohdaten bekannte OID-Werte suchen und darstellen
+    text = raw.decode("latin-1", errors="replace")
+    strings = re.findall(r"[\x20-\x7e]{4,}", text)
+    readable = [s for s in strings if len(s) > 5 and not s.startswith("0\x82")]
+    sha1 = __import__("hashlib").sha1(raw).hexdigest().upper()
+    sha256 = __import__("hashlib").sha256(raw).hexdigest().upper()
+    size = len(raw)
+    lines.append(f"  Größe:   {size} Bytes")
+    lines.append(f"  SHA-1:   {':'.join(sha1[i:i+2] for i in range(0,40,2))}")
+    lines.append(f"  SHA-256: {sha256[:32]}…")
+    # Erkennbare Textfelder aus dem Zertifikat
+    for s in readable[:30]:
+        if any(c.isalpha() for c in s) and s not in ("UTF-8", "BouncyCastle", "2.5.4"):
+            lines.append(f"  {s}")
+    return "\n".join(lines)
+
+
+def cert_analysis(adb: ADB, dev, st) -> None:
+    pkg = ui.ask("Paketname (leer = Datei-Pfad eingeben)").strip()
+    local = ""
+    if pkg:
+        paths = [ln.split("package:", 1)[1].strip()
+                 for ln in adb.shell(f"pm path {pkg}").splitlines() if "package:" in ln]
+        if not paths:
+            ui.err("Paket nicht gefunden."); ui.pause(); return
+        base = next((x for x in paths if x.endswith("base.apk")), paths[0])
+        local = os.path.join(OUT, f"cert_{pkg}.apk")
+        adb.raw(["pull", base, local], timeout=300)
+    else:
+        local = os.path.expanduser(ui.ask("APK-Pfad").strip())
+    if not os.path.isfile(local):
+        ui.err("Datei nicht gefunden."); ui.pause(); return
+    ui.clear(); ui.rule("Zertifikat-Analyse", ui.CYAN)
+    try:
+        with zipfile.ZipFile(local) as zf:
+            certs = [n for n in zf.namelist()
+                     if n.startswith("META-INF/") and n.lower().endswith((".rsa", ".dsa", ".ec"))]
+            if not certs:
+                ui.warn("Keine Zertifikat-Dateien in META-INF/ – unsignierte APK?")
+                ui.pause(); return
+            for cert_name in certs:
+                raw = zf.read(cert_name)
+                print(f"\n  {ui.BCYAN}{ui.BOLD}■ {cert_name}{ui.RESET}")
+                print(_parse_cert_info(raw))
+            # V2/V3 Signatur erkennbar?
+            v2 = any("APK Sig Block" in zf.comment.decode("utf-8", "replace")
+                     if zf.comment else False for _ in [1])
+            # Prüfe ob APK-Signing-Block vorhanden (simpel per Magic)
+            with open(local, "rb") as f:
+                apk_bytes = f.read()
+            has_v2 = b"APK Sig Block 42" in apk_bytes
+            print(f"\n  Signatur-Schema v1 (JAR): {'ja' if certs else 'nein'}")
+            print(f"  Signatur-Schema v2/v3:    {'ja (APK Sig Block 42 gefunden)' if has_v2 else 'unklar (ohne aapt)'}")
+    except Exception as e:  # noqa: BLE001
+        ui.err(str(e))
+    print()
+    # Externe Tool-Ausgabe wenn verfügbar
+    if __import__("shutil").which("keytool"):
+        try:
+            out = __import__("subprocess").check_output(
+                ["keytool", "-printcert", "-jarfile", local],
+                stderr=__import__("subprocess").DEVNULL, text=True, timeout=15
+            )
+            print(f"  {ui.BCYAN}keytool-Ausgabe:{ui.RESET}")
+            print(out[:2000])
+        except Exception:  # noqa: BLE001
+            pass
+    ui.pause()
+
+
+# ========================================================================== #
+#  8. Tracker-SDK-Erkennung
+# ========================================================================== #
+
+KNOWN_TRACKERS = {
+    "com.google.firebase":       "Firebase Analytics",
+    "com.google.android.gms.analytics": "Google Analytics",
+    "com.adjust.sdk":            "Adjust",
+    "io.branch.referral":        "Branch.io",
+    "com.appsflyer":             "AppsFlyer",
+    "com.facebook.appevents":    "Facebook Analytics",
+    "com.facebook.ads":          "Facebook Audience Network",
+    "com.mopub":                 "MoPub",
+    "com.chartboost":            "Chartboost",
+    "com.unity3d.ads":           "Unity Ads",
+    "com.ironsource":            "ironSource",
+    "com.applovin":              "AppLovin",
+    "com.vungle":                "Vungle",
+    "com.inmobi":                "InMobi",
+    "com.amazon.device.ads":     "Amazon Ads",
+    "com.moat":                  "Moat Analytics",
+    "com.criteo":                "Criteo",
+    "com.kochava":               "Kochava",
+    "com.singular.sdk":          "Singular",
+    "io.radar.sdk":              "Radar.io (Geo-Tracking)",
+    "com.onesignal":             "OneSignal (Push/Tracking)",
+    "com.urbanairship":          "Airship (Urban Airship)",
+    "com.crashlytics":           "Crashlytics/Firebase Crashlytics",
+    "com.bugsnag":               "Bugsnag",
+    "io.sentry":                 "Sentry",
+    "com.mixpanel":              "Mixpanel",
+    "com.amplitude.api":         "Amplitude Analytics",
+    "com.segment.analytics":     "Segment",
+    "com.intercom.android":      "Intercom",
+    "com.braze":                 "Braze (Appboy)",
+    "com.clevertap":             "CleverTap",
+    "com.localytics":            "Localytics",
+    "com.quantcast":             "Quantcast",
+    "com.comscore":              "Comscore",
+    "com.flurry.android":        "Yahoo Flurry",
+    "com.tapjoy":                "Tapjoy",
+    "com.adcolony":              "AdColony",
+    "com.startapp.android":      "StartApp",
+    "com.waps":                  "WAPS",
+    "com.mobvista":              "Mintegral/Mobvista",
+    "com.mintegral":             "Mintegral",
+    "net.pubnative":             "PubNative",
+    "com.taboola":               "Taboola",
+    "com.outbrain":              "Outbrain",
+    "com.revenuecat.purchases":  "RevenueCat (IAP-Tracking)",
+    "com.android.installreferrer": "Install Referrer (Google)",
+    "com.tenjin":                "Tenjin",
+    "com.liftoff":               "Liftoff",
+    "com.datadog.android":       "Datadog",
+    "com.newrelic.agent":        "New Relic",
+}
+
+PRIVACY_RISK_TRACKERS = {
+    "io.radar.sdk", "com.onesignal", "com.adjust.sdk", "com.appsflyer",
+    "com.kochava", "com.singular.sdk", "com.facebook.appevents",
+    "com.facebook.ads", "com.flurry.android",
+}
+
+
+def tracker_sdk_scan(adb: ADB, dev, st) -> None:
+    pkg = ui.ask("Paketname (leer = lokale APK-Datei)").strip()
+    local = ""
+    if pkg:
+        paths = [ln.split("package:", 1)[1].strip()
+                 for ln in adb.shell(f"pm path {pkg}").splitlines() if "package:" in ln]
+        if not paths:
+            ui.err("Paket nicht gefunden."); ui.pause(); return
+        base = next((x for x in paths if x.endswith("base.apk")), paths[0])
+        local = os.path.join(OUT, f"tk_{pkg}.apk")
+        ui.info("Lade APK …")
+        adb.raw(["pull", base, local], timeout=300)
+    else:
+        local = os.path.expanduser(ui.ask("APK-Pfad").strip())
+    if not os.path.isfile(local):
+        ui.err("Datei nicht gefunden."); ui.pause(); return
+    ui.clear(); ui.rule("Tracker-SDK-Erkennung", ui.CYAN)
+    ui.info("Durchsuche DEX-Klassen nach bekannten SDK-Signaturen …")
+    found: dict[str, str] = {}
+    try:
+        with zipfile.ZipFile(local) as zf:
+            dex_files = [n for n in zf.namelist() if n.endswith(".dex")]
+            for dex in dex_files[:5]:
+                try:
+                    data = zf.read(dex).decode("latin-1", errors="replace")
+                    for pkg_prefix, sdk_name in KNOWN_TRACKERS.items():
+                        if pkg_prefix.replace(".", "/") in data or pkg_prefix in data:
+                            found[pkg_prefix] = sdk_name
+                except (KeyError, OSError):
+                    pass
+    except Exception as e:  # noqa: BLE001
+        ui.err(str(e)); ui.pause(); return
+    print()
+    if not found:
+        ui.ok("Keine bekannten Tracker-SDKs erkannt.")
+    else:
+        high_risk = {k: v for k, v in found.items() if k in PRIVACY_RISK_TRACKERS}
+        normal = {k: v for k, v in found.items() if k not in PRIVACY_RISK_TRACKERS}
+        if high_risk:
+            print(f"  {ui.BRED}{ui.BOLD}⚠ DATENSCHUTZ-RISIKO ({len(high_risk)} SDKs):{ui.RESET}")
+            for k, v in sorted(high_risk.items()):
+                print(f"   {ui.BRED}■{ui.RESET} {v}  {ui.GREY}({k}){ui.RESET}")
+            print()
+        if normal:
+            print(f"  {ui.BYELLOW}TRACKING-SDKs ({len(normal)}):{ui.RESET}")
+            for k, v in sorted(normal.items()):
+                print(f"   {ui.BYELLOW}○{ui.RESET} {v}  {ui.GREY}({k}){ui.RESET}")
+    out_body = (f"# TRACKER-SDK-SCAN: {local}\n# {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                + "\n".join(f"{v} ({k})" for k, v in sorted(found.items())) + "\n")
+    p = os.path.join(OUT, f"trackers_{int(time.time())}.txt")
+    with open(p, "w", encoding="utf-8") as f:
+        f.write(out_body)
+    print(); ui.ok(f"Gesamt: {len(found)} SDK(s) erkannt → {p}")
+    ui.pause()
+
+
+# ========================================================================== #
+#  9. DEX-Statistik & Obfuskierungs-Score
+# ========================================================================== #
+
+def _dex_stats(data: bytes) -> dict:
+    """Liest DEX-Header und schätzt Obfuskierungs-Score."""
+    if len(data) < 112 or data[:3] != b"dex":
+        return {}
+    string_ids_size = struct.unpack_from("<I", data, 56)[0]
+    type_ids_size   = struct.unpack_from("<I", data, 64)[0]
+    proto_ids_size  = struct.unpack_from("<I", data, 72)[0]
+    field_ids_size  = struct.unpack_from("<I", data, 80)[0]
+    method_ids_size = struct.unpack_from("<I", data, 88)[0]
+    class_defs_size = struct.unpack_from("<I", data, 96)[0]
+    # Obfuskierungs-Indikator: kurze Klassennamen (a/b/c/...) dominieren?
+    strings_raw = data[
+        struct.unpack_from("<I", data, 60)[0]:
+        struct.unpack_from("<I", data, 60)[0] + min(string_ids_size * 4, 50000)
+    ]
+    short_strings = len(re.findall(rb"\x00[a-z]\x00", strings_raw))
+    obf_score = min(100, short_strings * 5)
+    return {
+        "strings": string_ids_size,
+        "types":   type_ids_size,
+        "protos":  proto_ids_size,
+        "fields":  field_ids_size,
+        "methods": method_ids_size,
+        "classes": class_defs_size,
+        "obf_score": obf_score,
+        "obf_level": ("STARK" if obf_score > 60 else "MITTEL" if obf_score > 20 else "GERING"),
+    }
+
+
+def dex_statistics(adb: ADB, dev, st) -> None:
+    pkg = ui.ask("Paketname (leer = lokale APK)").strip()
+    local = ""
+    if pkg:
+        paths = [ln.split("package:", 1)[1].strip()
+                 for ln in adb.shell(f"pm path {pkg}").splitlines() if "package:" in ln]
+        if not paths:
+            ui.err("Paket nicht gefunden."); ui.pause(); return
+        base = next((x for x in paths if x.endswith("base.apk")), paths[0])
+        local = os.path.join(OUT, f"dex_{pkg}.apk")
+        ui.info("Lade APK …")
+        adb.raw(["pull", base, local], timeout=300)
+    else:
+        local = os.path.expanduser(ui.ask("APK-Pfad").strip())
+    if not os.path.isfile(local):
+        ui.err("Datei nicht gefunden."); ui.pause(); return
+    ui.clear(); ui.rule("DEX-Statistik & Obfuskierungs-Score", ui.CYAN)
+    total_methods = 0
+    total_classes = 0
+    try:
+        with zipfile.ZipFile(local) as zf:
+            dex_files = sorted(n for n in zf.namelist() if n.endswith(".dex"))
+            for dex in dex_files:
+                try:
+                    data = zf.read(dex)
+                    stats = _dex_stats(data)
+                    if not stats:
+                        continue
+                    total_methods += stats["methods"]
+                    total_classes += stats["classes"]
+                    obf_color = (ui.BRED if stats["obf_score"] > 60
+                                 else ui.BYELLOW if stats["obf_score"] > 20
+                                 else ui.BGREEN)
+                    print(f"\n  {ui.BCYAN}{ui.BOLD}■ {dex}{ui.RESET}  ({len(data):,} Bytes)")
+                    print(f"    Klassen:   {stats['classes']:>6,}")
+                    print(f"    Methoden:  {stats['methods']:>6,}")
+                    print(f"    Felder:    {stats['fields']:>6,}")
+                    print(f"    Typen:     {stats['types']:>6,}")
+                    print(f"    Strings:   {stats['strings']:>6,}")
+                    print(f"    Obfusk.:   {obf_color}{stats['obf_level']} (Score: {stats['obf_score']}/100){ui.RESET}")
+                except (KeyError, OSError):
+                    pass
+    except Exception as e:  # noqa: BLE001
+        ui.err(str(e)); ui.pause(); return
+    print(f"\n  {ui.BOLD}GESAMT: {total_classes:,} Klassen · {total_methods:,} Methoden{ui.RESET}")
+    if total_methods > 65536:
+        ui.warn(f"MULTIDEX! {total_methods:,} Methoden > 65536 Limit → mehrere DEX-Files erforderlich")
+    print()
+    ui.pause()
+
+
+# ========================================================================== #
+#  10. App-Kommunikations-Analyse (Live ADB)
+# ========================================================================== #
+
+def app_communication(adb: ADB, dev, st) -> None:
+    pkg = ui.ask("Paketname").strip()
+    if not pkg:
+        return
+    ui.clear(); ui.rule(f"App-Kommunikations-Analyse · {pkg}", ui.CYAN)
+    lines = [f"# APP-KOMMUNIKATION: {pkg}", f"# {time.strftime('%Y-%m-%d %H:%M:%S')}", ""]
+
+    # Netzwerkverbindungen
+    ui.info("Netzwerkverbindungen (netstat) …")
+    netstat = adb.shell("cat /proc/net/tcp /proc/net/tcp6 2>/dev/null | head -n 100")
+    pid = adb.shell(f"pidof {pkg} 2>/dev/null").strip()
+    pid_conns = ""
+    if pid:
+        pid_conns = adb.shell(f"cat /proc/{pid}/net/tcp /proc/{pid}/net/tcp6 2>/dev/null | head -n 50")
+    lines += ["== NETZWERKVERBINDUNGEN ==",
+              f"PID: {pid or 'App läuft nicht'}",
+              pid_conns or netstat or "(keine)", ""]
+
+    # DNS-Abfragen über logcat
+    ui.info("DNS-Abfragen (logcat) …")
+    dns = adb.shell(f"logcat -d -t 200 -s 'NetworkSecurityConfig,ConnectivityManager,DnsResolver' 2>/dev/null "
+                    f"| grep -i '{pkg}\\|dns\\|connect' | tail -n 30")
+    lines += ["== DNS / NETZWERK-LOG ==", dns or "(keine Einträge)", ""]
+
+    # Exportierte Aktivitäten / Einstiegspunkte
+    ui.info("Exportierte Aktivitäten …")
+    exported = adb.shell(
+        f"dumpsys package {pkg} | grep -A2 'Activity\\|Service\\|Receiver' | grep 'permission\\|exported' | head -n 40"
+    )
+    lines += ["== EXPORTIERTE KOMPONENTEN ==", exported or "(keine / nicht abrufbar)", ""]
+
+    # Offene Dateien
+    ui.info("Offene Dateien (procfs) …")
+    open_files = ""
+    if pid:
+        open_files = adb.shell(f"ls -la /proc/{pid}/fd 2>/dev/null | head -n 50")
+    lines += ["== OFFENE DATEIEN ==", open_files or "(App läuft nicht oder kein Zugriff)", ""]
+
+    # Wakelock-Status
+    ui.info("Wakelock-Status …")
+    wakelock = adb.shell(f"dumpsys power 2>/dev/null | grep -i '{pkg}' | head -n 10")
+    lines += ["== WAKELOCK (Hintergrundaktivität) ==", wakelock or "(keine Wakelocks)", ""]
+
+    body = "\n".join(lines) + "\n"
+    p = os.path.join(OUT, f"comms_{re.sub(r'[^A-Za-z0-9_]', '_', pkg)}_{int(time.time())}.txt")
+    with open(p, "w", encoding="utf-8") as f:
+        f.write(body)
+    ui.show_report(body, f"App-Kommunikation · {pkg}", p)
+    ui.pause()
+
+
+# ========================================================================== #
 #  IOC-Scan (geräteweit)
 # ========================================================================== #
 def ioc_scan(adb: ADB, dev, st) -> None:
@@ -645,13 +1075,18 @@ def ioc_scan(adb: ADB, dev, st) -> None:
 def menu(adb: ADB, dev, st) -> None:
     while True:
         ui.clear()
-        ui.banner(subtitle="🧪 APK-Analyse · Risk-Scoring · IOC")
+        ui.banner(subtitle="🧪 APK-Analyse · Risk-Scoring · IOC · Tracker · DEX · Zertifikat")
         ch = ui.menu("Module", [
-            ("1", "📦 Installierte App analysieren (APK ziehen → Offline-Statik)"),
-            ("2", "📂 Lokale .apk-Datei analysieren"),
-            ("3", "📊 App-Risiko-Inventar (alle Apps bewerten & ranken + Tiefen-Analyse)"),
-            ("4", "🚨 IOC-Scan (hosts/Accessibility/Device-Admin/Stalkerware)"),
-            ("5", f"{ui.BCYAN}{ui.BOLD}🔬 Risiko-App KOMPLETT analysieren (Statik + ALLE Verzeichnisse){ui.RESET}"),
+            ("1",  "📦 Installierte App analysieren (APK ziehen → Offline-Statik)"),
+            ("2",  "📂 Lokale .apk-Datei analysieren"),
+            ("3",  "📊 App-Risiko-Inventar (alle Apps bewerten & ranken + Tiefen-Analyse)"),
+            ("4",  "🚨 IOC-Scan (hosts/Accessibility/Device-Admin/Stalkerware)"),
+            ("5",  f"{ui.BCYAN}{ui.BOLD}🔬 Risiko-App KOMPLETT analysieren (Statik + ALLE Verzeichnisse){ui.RESET}"),
+            ("6",  "🔍 Tiefen-String-Scan (URLs/E-Mails/Base64/API-Keys aus DEX)"),
+            ("7",  "📜 Zertifikat-Analyse (Signier-Cert, Fingerprint, Schema v1/v2/v3)"),
+            ("8",  "📡 Tracker-SDK-Erkennung (50+ bekannte SDKs: Adjust/Firebase/AppLovin …)"),
+            ("9",  "📊 DEX-Statistik & Obfuskierungs-Score (Klassen/Methoden/MultiDEX)"),
+            ("10", "🌐 App-Kommunikations-Analyse (Live: Netzwerk/DNS/Dateien/Wakelock)"),
         ], back_label="Hauptmenü")
         if ch in ("back", "quit"):
             return
@@ -666,6 +1101,16 @@ def menu(adb: ADB, dev, st) -> None:
                 ioc_scan(adb, dev, st)
             elif ch == "5":
                 deep_risk_menu(adb, dev, st)
+            elif ch == "6":
+                deep_string_scan(adb, dev, st)
+            elif ch == "7":
+                cert_analysis(adb, dev, st)
+            elif ch == "8":
+                tracker_sdk_scan(adb, dev, st)
+            elif ch == "9":
+                dex_statistics(adb, dev, st)
+            elif ch == "10":
+                app_communication(adb, dev, st)
             else:
                 ui.warn("Ungültige Auswahl.")
         except Exception as e:  # noqa: BLE001

@@ -5,8 +5,9 @@ import sys
 import time
 
 from . import (acquire, aishell, apkscan, appscan, bootloop, brands, casedb, customfw,
-               dashboard, dataforensics, dashboard_runner, filetree, forensics, frida_engine,
-               labsetup, lang, mediatek, messenger, modeswitch, registry, report, rescue,
+               dashboard, dataforensics, dashboard_runner, deepforensics, filetree, forensics, frida_engine,
+               handlers, labsetup, lang, mediatek, messenger, modeswitch, osint, phoneosint,
+               registry, report, rescue,
                rooting, rootkit, rootprep, samsung, timeline, traffic, ui, usb,
                ai_core, ai_integration, ai_automation, deep_analysis_scan,
                microphone_tap, camera_tap, network_analyzer, adult_content_scanner,
@@ -14,7 +15,8 @@ from . import (acquire, aishell, apkscan, appscan, bootloop, brands, casedb, cus
                app_decryption, brute_force, wifi_handshake, dns_guardian, tracker_system,
                intelligent_engine, database_scanner, lab_manager, keyword_recorder, adult_activity_detector, wifi_room_scanner_3d,
                forensic_audio_analyzer, security_framework, password_manager, audio_playback, adb_shell, auto_root_engine,
-               numeric_menu)
+               numeric_menu, settings_manager, google_account_scanner,
+               account_scanner, frp_scanner, progress, sim_toolkit)
 from .adb import ADB, AdbError, Device
 from .util import LOG
 
@@ -197,16 +199,40 @@ def _main_menu(adb: ADB, dev: Device, st: dict, data: dict) -> None:
     _numeric_main_menu(adb, dev, st, data)
 
 
+def _check_and_reconnect(adb: ADB, dev: Device) -> bool:
+    """Prüft ADB-Verbindung; versucht automatischen Reconnect wenn nötig.
+
+    Gibt True zurück wenn das Gerät erreichbar ist, False wenn aufgegeben.
+    """
+    if adb.is_connected():
+        return True
+    ui.warn("⚠  ADB-Verbindung verloren – versuche Reconnect …")
+    if adb.ensure_connected(max_wait=30):
+        ui.ok("✓ Verbindung wiederhergestellt.")
+        return True
+    ui.err("Gerät nicht erreichbar. Bitte Kabel prüfen und USB-Debugging bestätigen.")
+    return False
+
+
 def _numeric_main_menu(adb: ADB, dev: Device, st: dict, data: dict) -> None:
-    """Hauptmenü NUR MIT ZAHLEN (1-33)."""
+    """Hauptmenü NUR MIT ZAHLEN (1-40)."""
+    # Module die KEIN aktives ADB-Gerät brauchen (nur lokale Logik / Einstellungen)
+    _no_adb_needed = {"4", "5", "42", "49", "q", "55"}
     while True:
         try:
             num_menu = numeric_menu.create_numeric_menu(adb)
 
             ui.clear()
+            # Verbindungsstatus in der Banner-Zeile anzeigen
+            try:
+                connected = adb.is_connected()
+            except Exception:  # noqa: BLE001
+                connected = False
+            conn_badge = (f"{ui.BGREEN}● ADB verbunden{ui.RESET}" if connected
+                          else f"{ui.BRED}✖ KEIN GERÄT{ui.RESET}")
             root_txt = (f"{ui.BGREEN}● {lang.t('menu_rooted')}{ui.RESET}" if st.get("is_root")
                         else f"{ui.GREY}○ {lang.t('menu_not_rooted')}{ui.RESET}")
-            ui.banner(subtitle=f"{data.get('brand','')} {data.get('model','')}  •  Root: {root_txt}")
+            ui.banner(subtitle=f"{data.get('brand','')} {data.get('model','')}  •  {conn_badge}  •  Root: {root_txt}")
 
             choice = num_menu.show_numeric_menu({})
 
@@ -218,137 +244,190 @@ def _numeric_main_menu(adb: ADB, dev: Device, st: dict, data: dict) -> None:
             # Map numbers to handlers
             choice_lower = choice.lower()
 
+            # Für ADB-pflichtige Module: Verbindung sicherstellen
+            if choice_lower not in _no_adb_needed:
+                if not _check_and_reconnect(adb, dev):
+                    ui.pause()
+                    continue
+
+            # ── Live-Balken-Wrapper: für ALLE 54 Module automatisch ──────────
+            _bar = progress.run_steps
+            _s   = progress.get_steps
+
             if choice_lower == "1":
-                # Deep Analysis
+                _bar("🔬 TIEFE ANALYSE", _s("1"))
                 scanner = deep_analysis_scan.create_deep_analysis_scan(adb)
                 result = scanner.run_complete_scan()
                 scanner.show_scan_dashboard()
                 ui.pause()
             elif choice_lower == "2":
-                # Dashboard
+                _bar("📊 DASHBOARD", _s("2"))
                 dashboard.render(adb, dev, data)
                 ui.pause()
             elif choice_lower == "3":
-                # Categories
+                _bar("📋 KATEGORIEN", _s("3"))
                 _categories_overview(adb, dev, st)
             elif choice_lower == "4":
-                # Theme/UI
-                ui.info("UI Theme-Einstellungen (noch nicht implementiert)")
-                ui.pause()
+                _bar("🎨 UI THEME", _s("4"))
+                settings_manager.show_settings(adb)
             elif choice_lower == "5":
-                # Settings
-                ui.info("System-Einstellungen (noch nicht implementiert)")
-                ui.pause()
+                _bar("⚙️  EINSTELLUNGEN", _s("5"))
+                settings_manager.show_settings(adb)
             elif choice_lower == "6":
-                # Microphone Tap
+                _bar("🎙️  MICROPHONE TAP", _s("6"))
                 mic_tap = microphone_tap.create_microphone_tap(adb)
                 mic_tap.show_microphone_menu()
             elif choice_lower == "7":
-                # Camera Tap
+                _bar("📷 CAMERA TAP", _s("7"))
                 cam_tap = camera_tap.create_camera_tap(adb)
                 cam_tap.show_camera_menu()
             elif choice_lower == "8":
-                # Network Analyzer
+                _bar("🌐 NETWORK ANALYZER", _s("8"))
                 net_analyzer = network_analyzer.create_network_analyzer(adb)
                 net_analyzer.show_network_menu()
             elif choice_lower == "9":
-                # Forensics
+                _bar("🔍 FORENSIK SUITE", _s("9"))
                 forensics.menu(adb, st)
             elif choice_lower == "10":
-                # APK Scanner
+                _bar("📦 APK SCANNER", _s("10"))
                 apkscan.menu(adb, dev, st)
             elif choice_lower == "11":
-                # App Scanner
+                _bar("🗃️  APP SCANNER", _s("11"))
                 appscan.menu(adb, dev, st, data)
             elif choice_lower == "12":
-                # File Tree
+                _bar("📁 DATEI TREE", _s("12"))
                 filetree.menu(adb, dev, st)
             elif choice_lower == "13":
-                # Data Forensics
+                _bar("💾 DATEN FORENSIK", _s("13"))
                 dataforensics.menu(adb, dev, st)
             elif choice_lower == "14":
-                # Depth Engine
+                _bar("🎯 TIEFE ENGINE", _s("14"))
                 _depth_engine(adb, dev, st)
             elif choice_lower == "15":
-                # Case Database
+                _bar("🗂️  CASE DATABASE", _s("15"))
                 casedb.menu(adb, dev, st, data)
             elif choice_lower == "16":
-                # Report Generator
+                _bar("📄 REPORT GENERATOR", _s("16"))
                 report.menu(adb, dev, st, data)
             elif choice_lower == "17":
-                # Mode Switch
+                _bar("🔄 MODE SWITCH", _s("17"))
                 modeswitch.menu(adb, dev, st, data)
             elif choice_lower == "18":
-                # Custom Firmware
+                _bar("🔧 CUSTOM FIRMWARE", _s("18"))
                 customfw.show_custom_firmware(adb, dev, st, data)
             elif choice_lower == "19":
-                # Rootkit Scanner
+                _bar("🌐 ROOTKIT SCANNER", _s("19"))
                 rootkit.menu(adb, dev, st)
             elif choice_lower == "20":
-                # Rooting Tools
+                _bar("🚀 ROOTING TOOLS", _s("20"))
                 rooting.show_and_offer(adb, dev, data, st)
                 st["is_root"] = adb.check_root()
                 data["root"] = st["is_root"]
             elif choice_lower == "21":
-                # Data Acquisition
+                _bar("📸 DATA ACQUISITION", _s("21"))
                 acquire.menu(adb, dev, st, data)
             elif choice_lower == "22":
-                # App Decryption
+                _bar("🔓 APP DECRYPTION", _s("22"))
                 app_decryption.menu(adb)
             elif choice_lower == "23":
-                # Brute Force
+                _bar("🔨 BRUTE FORCE", _s("23"))
                 brute_force.menu(adb)
             elif choice_lower == "24":
-                # WiFi Handshake
+                _bar("📡 WIFI HANDSHAKE", _s("24"))
                 wifi_handshake.menu(adb)
             elif choice_lower == "25":
-                # DNS Guardian
+                _bar("🛡️  DNS GUARDIAN", _s("25"))
                 dns_guardian.menu(adb)
             elif choice_lower == "26":
-                # Tracker System
+                _bar("🎯 TRACKER SYSTEM", _s("26"))
                 tracker_system.menu(adb)
             elif choice_lower == "27":
-                # Intelligent Engine
+                _bar("🧠 INTELLIGENT ENGINE", _s("27"))
                 intelligent_engine.menu(adb)
             elif choice_lower == "28":
-                # Database Scanner
+                _bar("💾 DATABASE SCANNER", _s("28"))
                 database_scanner.menu(adb)
             elif choice_lower == "29":
-                # Lab Manager
+                _bar("🧪 LAB MANAGER", _s("29"))
                 lab_manager.menu(adb)
             elif choice_lower == "30":
-                # 3D WiFi Scanner
+                _bar("🌐 3D WIFI SCANNER", _s("30"))
                 wifi_room_scanner_3d.menu(adb)
             elif choice_lower == "31":
-                # Adult Activity Detector
+                _bar("🔍 ADULT DETECTOR", _s("31"))
                 adult_activity_detector.menu(adb)
             elif choice_lower == "32":
-                # Anomaly Detector
+                _bar("🔴 ANOMALY DETECTOR", _s("32"))
                 anomaly_detector.menu(adb)
             elif choice_lower == "33":
-                # AI Doctor
+                _bar("🏥 AI DOCTOR", _s("33"))
                 ai_doctor.menu(adb)
             elif choice_lower == "34":
-                # Forensic Audio Analyzer
+                _bar("🔬 FORENSIC ANALYZER", _s("34"))
                 forensic_audio_analyzer.menu(adb)
             elif choice_lower == "35":
-                # Security Framework
+                _bar("🔐 SECURITY FRAMEWORK", _s("35"))
                 security_framework.menu(adb)
             elif choice_lower == "36":
-                # Password Manager
+                _bar("🔑 PASSWORD MANAGER", _s("36"))
                 password_manager.menu(adb)
             elif choice_lower == "37":
-                # Audio Playback
+                _bar("🎵 AUDIO PLAYBACK", _s("37"))
                 audio_playback.menu(adb)
             elif choice_lower == "38":
-                # ADB Shell
+                _bar("🐚 ADB SHELL", _s("38"))
                 adb_shell.menu(adb)
             elif choice_lower == "39":
-                # Auto Root Engine
+                _bar("🔓 AUTO ROOT ENGINE", _s("39"))
                 auto_root_engine.menu(adb)
             elif choice_lower == "40":
-                # Keyword Recorder
-                ui.warn("Keyword Recorder - Feature im Microphone TAP integriert")
+                _bar("🎤 KEYWORD RECORDER", _s("40"))
+                keyword_recorder.menu(adb)
+            elif choice_lower == "41":
+                _bar("🚑 AUTO-RESCUE", _s("41"))
+                rescue.auto_rescue(dev)
+            elif choice_lower == "42":
+                _bar("📡 BOOTLOOP-MONITOR", _s("42"))
+                bootloop.monitor()
+            elif choice_lower == "43":
+                _bar("🕵  OSINT-TOOLKIT", _s("43"))
+                osint.menu(adb, dev, st)
+            elif choice_lower == "44":
+                _bar("🤖 KI-ADB-SHELL", _s("44"))
+                aishell.menu(adb, dev, st)
+            elif choice_lower == "45":
+                _bar("📱 SAMSUNG TOOLS", _s("45"))
+                samsung.menu(adb, dev, st, data)
+            elif choice_lower == "46":
+                _bar("🔶 MEDIATEK ROOT", _s("46"))
+                mediatek.menu(adb, dev, st, data)
+            elif choice_lower == "47":
+                _bar("🏷  HERSTELLER-TOOLS", _s("47"))
+                brands.menu(adb, dev, st, data)
+            elif choice_lower == "48":
+                _bar("📶 MOBILFUNK-MONITOR", _s("48"))
+                handlers.cell_monitor(adb, dev, st)
+            elif choice_lower == "49":
+                _bar("🧪 LABOR-EINRICHTUNG", _s("49"))
+                labsetup.menu(adb, dev, st)
+            elif choice_lower == "50":
+                _bar("🔬 DEEP-FORENSIK", _s("50"))
+                deepforensics.menu(adb, dev, st)
+            elif choice_lower == "51":
+                _bar("📞 TELEFON-OSINT", _s("51"))
+                phoneosint.menu(adb, dev, st)
+            elif choice_lower == "52":
+                _bar("🔑 GOOGLE-KONTEN", _s("52"))
+                google_account_scanner.menu(adb)
+            elif choice_lower == "53":
+                _bar("📱 KONTO-SCANNER", _s("53"))
+                account_scanner.menu(adb)
+            elif choice_lower == "54":
+                _bar("🔒 FRP-SCANNER", _s("54"))
+                frp_scanner.menu(adb)
+            elif choice_lower == "55":
+                _bar("💳 SIM-TOOLKIT", _s("55"))
+                sim_toolkit.menu(adb, dev, st)
             else:
                 ui.warn("Ungültige Option!")
                 time.sleep(0.5)
@@ -596,8 +675,12 @@ def _main_menu_OLD(adb: ADB, dev: Device, st: dict, data: dict) -> None:
 
 
 def run() -> int:
-    # 🎨 MODERN STARTUP SCREEN
-    modern_startup.animate_startup()
+    # 🎨 MODERN STARTUP SCREEN + vollständiger 54-Modul-Scan
+    _startup_failures = modern_startup.animate_startup()
+    if _startup_failures:
+        LOG.warning("Startup: %d Module fehlerhaft: %s",
+                    len(_startup_failures),
+                    [f"[{n}] {name}" for n, name, _ in _startup_failures])
 
     try:
         ADB.start_server()

@@ -66,6 +66,25 @@ class NumericMainMenu:
         (38, "🐚 ADB SHELL", "Interactive Shell", "shell"),
         (39, "🔓 AUTO ROOT ENGINE", "Rooting + Data Recovery", "autoroot"),
         (40, "🎤 KEYWORD RECORDER", "Audio mit Keywords", "recorder"),
+
+        # TIER 9: KLASSISCHE TOOLS AUS ALTER VERSION (41-49)
+        (41, "🚑 AUTO-RESCUE", "Automatische Rettungs-/Flash-Kaskade", "rescue"),
+        (42, "📡 BOOTLOOP-MONITOR", "USB-Zyklen Live-Ueberwachung", "bootloop"),
+        (43, "🕵  OSINT-TOOLKIT", "IP/Mail/Username/Domain/KI-Analyst", "osint"),
+        (44, "🤖 KI-ADB-SHELL", "Lokale Ollama KI-Shell", "aishell"),
+        (45, "📱 SAMSUNG TOOLS", "Root / Odin / TWRP / Flasher", "samsung"),
+        (46, "🔶 MEDIATEK ROOT", "mtkclient / BROM-Root", "mediatek"),
+        (47, "🏷  HERSTELLER-TOOLS", "Xiaomi / Pixel / OnePlus / Moto / Huawei", "brands"),
+        (48, "📶 MOBILFUNK-MONITOR", "Live Zellen- & IMSI-Monitor", "cellmonitor"),
+        (49, "🧪 LABOR-EINRICHTUNG", "Alle Forensik-Tools installieren (apt/pip)", "labsetup"),
+        (50, "🔬 DEEP-FORENSIK", "Timeline / Geo-Map / Radio-History / gelöschte Daten", "deepforensics"),
+        (51, "📞 TELEFON-OSINT", "Carrier-Lookup / Reputation / Social-Media-Suche", "phoneosint"),
+        (52, "🔑 GOOGLE-KONTEN",   "Alle angemeldeten Google-Konten + FRP-Schutz scannen", "gaccounts"),
+        (53, "📱 KONTO-SCANNER",   "Samsung / Microsoft / Social Media / Streaming-Konten", "accounts"),
+        (54, "🔒 FRP-SCANNER",     "Factory Reset Protection – 10 Erkennungsmethoden", "frp"),
+
+        # TIER 10: SIM-TOOLKIT
+        (55, "💳 SIM-TOOLKIT",    "35 Kategorien · 350 Features · Alle SIM-Modelle", "simtoolkit"),
     ]
 
     def __init__(self, adb=None):
@@ -131,7 +150,21 @@ class NumericMainMenu:
         # Gruppe 8
         print(f"{ui.BMAGENTA}{'TIER 8: FORENSIC & SECURITY ADVANCED':^80}{ui.RESET}")
         print()
-        for num, icon, desc, key in self.MENU_ITEMS[33:]:
+        for num, icon, desc, key in self.MENU_ITEMS[33:40]:
+            print(f"  {ui.BOLD}{num:2d}{ui.RESET}  {icon:30}  {desc}")
+        print()
+
+        # Gruppe 9
+        print(f"{ui.BGREEN}{'TIER 9: KLASSISCHE TOOLS (aus alter Version)':^80}{ui.RESET}")
+        print()
+        for num, icon, desc, key in self.MENU_ITEMS[40:54]:
+            print(f"  {ui.BOLD}{num:2d}{ui.RESET}  {icon:30}  {desc}")
+        print()
+
+        # Gruppe 10: SIM-Toolkit
+        print(f"{ui.BCYAN}{'TIER 10: SIM-KARTEN TOOLKIT':^80}{ui.RESET}")
+        print()
+        for num, icon, desc, key in self.MENU_ITEMS[54:]:
             print(f"  {ui.BOLD}{num:2d}{ui.RESET}  {icon:30}  {desc}")
         print()
 
@@ -141,7 +174,7 @@ class NumericMainMenu:
         print("   Q  Beenden")
         print()
 
-        choice = input(f"  {ui.BOLD}☠ ❯ Auswahl (0-40, Q): {ui.RESET}").strip().upper()
+        choice = input(f"  {ui.BOLD}☠ ❯ Auswahl (0-55, Q): {ui.RESET}").strip().upper()
         return choice
 
     def get_handler(self, choice: str) -> str:

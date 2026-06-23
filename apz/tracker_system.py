@@ -521,49 +521,114 @@ class TrackerSystem:
         return len(device_id) >= 10
 
     def _simulate_ip_lookup(self, ip: str) -> IPInfo:
-        """Simuliert IP-Lookup."""
-        import random
+        """Echtes IP-Lookup via ip-api.com (kostenlos, kein API-Key)."""
+        import urllib.request
+        import json as _json
 
-        cities = ["Berlin", "Munich", "Hamburg", "Cologne", "Frankfurt"]
-        isps = ["Deutsche Telekom", "Vodafone", "O2", "1&1", "Plusnet"]
+        try:
+            fields = "status,country,countryCode,regionName,city,lat,lon,timezone,isp,org,as,proxy,hosting,mobile"
+            url = f"http://ip-api.com/json/{ip}?fields={fields}"
+            req = urllib.request.Request(url, headers={"User-Agent": "AndroidPanzer/1.0"})
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                data = _json.loads(resp.read().decode())
 
-        return IPInfo(
-            ip_address=ip,
-            country="Germany",
-            country_code="DE",
-            city=random.choice(cities),
-            region="Germany",
-            latitude=random.uniform(47.0, 55.0),
-            longitude=random.uniform(5.0, 15.0),
-            isp=random.choice(isps),
-            organization=random.choice(isps),
-            threat_level=random.choice(["Low", "Medium", "High"]),
-        )
+            if data.get("status") == "success":
+                is_proxy = bool(data.get("proxy"))
+                return IPInfo(
+                    ip_address=ip,
+                    country=data.get("country", ""),
+                    country_code=data.get("countryCode", ""),
+                    city=data.get("city", ""),
+                    region=data.get("regionName", ""),
+                    latitude=float(data.get("lat", 0.0)),
+                    longitude=float(data.get("lon", 0.0)),
+                    timezone=data.get("timezone", ""),
+                    isp=data.get("isp", ""),
+                    asn=data.get("as", ""),
+                    organization=data.get("org", ""),
+                    is_proxy=is_proxy,
+                    is_datacenter=bool(data.get("hosting")),
+                    is_mobile=bool(data.get("mobile")),
+                    threat_level="High" if is_proxy else "Low",
+                )
+        except Exception as _e:
+            ui.warn(f"ip-api.com nicht erreichbar: {_e} – verwende leere Daten")
+
+        return IPInfo(ip_address=ip, threat_level="Unknown")
 
     def _simulate_phone_lookup(self, phone: str) -> PhoneInfo:
-        """Simuliert Telefon-Lookup."""
+        """Echtes Telefon-Lookup via phonenumbers-Bibliothek (pip install phonenumbers)."""
+        try:
+            import phonenumbers
+            from phonenumbers import geocoder, carrier as pn_carrier
+
+            parsed = phonenumbers.parse(phone, None)
+            valid = phonenumbers.is_valid_number(parsed)
+            country = geocoder.description_for_number(parsed, "de") or ""
+            region = phonenumbers.region_code_for_number(parsed) or ""
+            op = pn_carrier.name_for_number(parsed, "de") or "Unknown"
+            num_type = phonenumbers.number_type(parsed)
+            is_mobile = num_type in (
+                phonenumbers.PhoneNumberType.MOBILE,
+                phonenumbers.PhoneNumberType.FIXED_LINE_OR_MOBILE,
+            )
+            fmt_intl = phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.INTERNATIONAL)
+            fmt_nat = phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.NATIONAL)
+            fmt_e164 = phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.E164)
+
+            return PhoneInfo(
+                phone_number=phone,
+                country=country or region,
+                country_code=region,
+                operator=op,
+                phone_type="Mobile" if is_mobile else "Landline",
+                valid=valid,
+                sms_capable=is_mobile,
+                call_capable=True,
+                formatted_international=fmt_intl,
+                formatted_national=fmt_nat,
+                e164_format=fmt_e164,
+            )
+        except ImportError:
+            ui.warn("phonenumbers nicht installiert – pip install phonenumbers")
+        except Exception as _e:
+            ui.warn(f"Telefon-Lookup fehlgeschlagen: {_e}")
+
         return PhoneInfo(
             phone_number=phone,
-            country="Germany",
-            country_code="DE",
-            operator="Vodafone",
-            phone_type="Mobile",
-            valid=True,
-            sms_capable=True,
-            call_capable=True,
-            risk_score=0.2,
+            country="Unknown",
+            operator="Unknown",
+            valid=self._validate_phone(phone),
         )
 
     def _simulate_device_lookup(self, device_id: str) -> DeviceInfo:
-        """Simuliert Device-Lookup."""
+        """Echtes Device-Lookup via ADB getprop."""
+        model = ""
+        brand = ""
+        os_ver = ""
+        serial = ""
+
+        if self.adb:
+            try:
+                props = self.adb.getprops()
+                model = props.get("ro.product.model", "") or props.get("ro.product.name", "")
+                brand = (props.get("ro.product.brand", "")
+                         or props.get("ro.product.manufacturer", ""))
+                release = props.get("ro.build.version.release", "")
+                os_ver = f"Android {release}".strip() if release else "Android"
+                serial = (props.get("ro.serialno", "")
+                          or props.get("ro.boot.serialno", ""))
+            except Exception as _e:
+                ui.warn(f"ADB getprop fehlgeschlagen: {_e}")
+
         return DeviceInfo(
             device_id=device_id,
-            imei=device_id,
-            model="Samsung Galaxy S21",
-            brand="Samsung",
-            os_version="Android 13",
-            status=DeviceStatus.ACTIVE,
-            device_age_days=365,
+            imei=device_id if len(device_id) == 15 and device_id.isdigit() else "",
+            model=model or "Unknown",
+            brand=brand or "Unknown",
+            os_version=os_ver or "Android",
+            serial_number=serial,
+            status=DeviceStatus.ACTIVE if model else DeviceStatus.UNKNOWN,
         )
 
     def _display_ip_info(self, ip_info: IPInfo) -> None:

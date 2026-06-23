@@ -583,5 +583,5 @@ def create_adult_activity_detector(adb: ADB) -> AdultActivityDetector:
 def menu(adb=None) -> None:
     """AdultActivityDetector Menu Wrapper."""
     obj = AdultActivityDetector(adb) if adb else AdultActivityDetector()
-    obj.show_menu()
+    obj.show_adult_detector_menu()
 

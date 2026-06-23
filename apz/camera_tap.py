@@ -183,8 +183,33 @@ class PasswordProtection:
             return int(self.lockout_until - time.time())
         return 0
 
+    def _verify(self, password: str) -> bool:
+        """Prüft Passwort gegen zentralen PasswordManager, fällt auf Default zurück."""
+        # Zentrales Passwort hat Vorrang (in Einstellungen gesetzt)
+        try:
+            from .password_manager import PasswordManager, ModuleType
+            pm = PasswordManager()
+            st = pm.get_module_password_status(ModuleType.CAMERA_TAP)
+            if st["set"]:
+                return pm.verify_module_password(ModuleType.CAMERA_TAP, password)
+        except Exception:
+            pass
+        # Fallback: eingebautes Default-Passwort
+        return hashlib.sha256(password.encode()).hexdigest() == self.DEFAULT_PASSWORD_HASH
+
+    def _hint(self) -> str:
+        """Zeigt Hinweis ob zentrales oder Default-Passwort aktiv ist."""
+        try:
+            from .password_manager import PasswordManager, ModuleType
+            pm = PasswordManager()
+            if pm.get_module_password_status(ModuleType.CAMERA_TAP)["set"]:
+                return "  (Passwort via Einstellungen → Modul-Passwörter festgelegt)"
+            return "  (Standard-Passwort aktiv – in Einstellungen ändern)"
+        except Exception:
+            return ""
+
     def authenticate(self) -> bool:
-        """Authentifiziere mit Password."""
+        """Authentifiziere – prüft erst zentralen PasswordManager, dann Default."""
         if self.is_locked_out():
             lockout = self.get_lockout_remaining()
             ui.err(f"❌ GESPERRT! Warte {lockout} Sekunden...")
@@ -195,14 +220,13 @@ class PasswordProtection:
         ui.rule("🔐 CAMERA-TAP PASSWORD-SCHUTZ", ui.BRED)
         print()
         print("  ⚠️  Dieses Tool ist GESCHÜTZT!")
-        print("  Geben Sie das Passwort ein.")
+        print(self._hint())
         print()
 
         try:
             password = getpass("  Passwort: ")
-            password_hash = hashlib.sha256(password.encode()).hexdigest()
 
-            if password_hash == self.DEFAULT_PASSWORD_HASH:
+            if self._verify(password):
                 self.authenticated = True
                 self.failed_attempts = 0
                 ui.ok("✅ Authentifizierung erfolgreich!")
@@ -215,7 +239,7 @@ class PasswordProtection:
 
                 if self.failed_attempts >= self.MAX_ATTEMPTS:
                     self.lockout_until = time.time() + self.LOCKOUT_TIME_SECONDS
-                    ui.err(f"❌ Zu viele falsche Versuche! System für 5 Min gesperrt.")
+                    ui.err("❌ Zu viele falsche Versuche! System für 5 Min gesperrt.")
                     self.audit_log.log_event("AUTH_LOCKOUT", "Max failed attempts reached - 5 min lockout", False)
                     time.sleep(2)
                     return False
@@ -529,33 +553,75 @@ class CameraTap:
             ui.pause()
 
     def _start_simulated_stream(self) -> None:
-        """Fallback: Simulierter Stream ohne OpenCV."""
-        if not ui.confirm("Wirklich starten (Simulator)?", False):
+        """ADB screencap-basierter Stream-Fallback (kein OpenCV erforderlich).
+
+        Verwendet 'adb shell screencap -p' um laufend Frames zu speichern
+        und auf der Konsole Metadaten anzuzeigen.
+        """
+        import subprocess
+        import shutil as _shutil
+        import os as _os
+
+        if not ui.confirm("Wirklich starten (ADB-Screencap-Stream)?", False):
             return
 
-        print("\n  Starte Simulator-Modus...")
+        out_dir = _os.path.expanduser("/tmp/panzer_cam")
+        _os.makedirs(out_dir, exist_ok=True)
+
+        print("\n  Starte ADB-Screencap-Stream...")
+
+        adb_bin = _shutil.which("adb")
+        serial_args: list[str] = []
+        if self.adb and self.adb.serial:
+            serial_args = ["-s", self.adb.serial]
 
         try:
             self.is_streaming = True
             session = VideoSession(
-                session_id=f"stream_sim_{int(time.time())}",
+                session_id=f"stream_adb_{int(time.time())}",
                 start_time=time.time(),
                 status="streaming",
                 stream_active=True,
             )
 
-            ui.rule("🟡 SIMULATOR-STREAM (Kein OpenCV)", ui.BYELLOW)
+            ui.rule("🟠 ADB SCREENCAP STREAM", ui.BYELLOW)
             print()
-            print("  Simulator läuft...")
+            print(f"  Speicherpfad: {out_dir}")
             print("  [Strg+C zum Stoppen]")
             print()
 
             frames = 0
+            max_frames = 300  # ~10 s @ 30fps-äquivalent; Screencap ist langsamer (~1-2 fps)
+
             try:
-                for i in range(300):
-                    ui.progress(i, 300, f"Sim-Stream... ({frames} frames)")
-                    frames += 1
-                    time.sleep(0.033)
+                while self.is_streaming and frames < max_frames:
+                    frame_path = _os.path.join(out_dir, f"frame_{frames:05d}.png")
+
+                    if adb_bin:
+                        # adb exec-out screencap -p > frame.png
+                        with open(frame_path, "wb") as fp:
+                            result = subprocess.run(
+                                [adb_bin] + serial_args + ["exec-out", "screencap", "-p"],
+                                stdout=fp, stderr=subprocess.DEVNULL, timeout=5,
+                            )
+                        if result.returncode != 0 or _os.path.getsize(frame_path) < 100:
+                            _os.remove(frame_path) if _os.path.exists(frame_path) else None
+                            ui.warn("screencap fehlgeschlagen – kein Gerät verbunden?")
+                            break
+
+                        frames += 1
+                        elapsed = time.time() - session.start_time
+                        fps_actual = frames / elapsed if elapsed > 0 else 0
+                        ui.progress(
+                            frames, max_frames,
+                            f"Frame {frames} | {fps_actual:.1f} fps | {out_dir}"
+                        )
+                    else:
+                        ui.warn("adb nicht gefunden")
+                        break
+
+                    time.sleep(0.5)  # screencap braucht ~0.3-1s → realistisches Intervall
+
             except KeyboardInterrupt:
                 pass
 
@@ -565,13 +631,24 @@ class CameraTap:
             session.duration_ms = int((time.time() - session.start_time) * 1000)
             self.session_history.append(session)
 
-            self.audit_log.log_event("LIVE_STREAM_STOP", f"Simulator stream: {frames} frames", True)
+            size_mb = sum(
+                _os.path.getsize(_os.path.join(out_dir, f))
+                for f in _os.listdir(out_dir)
+                if f.endswith(".png")
+            ) / 1024 / 1024 if frames > 0 else 0.0
 
-            ui.ok("Simulator-Stream beendet")
+            self.audit_log.log_event(
+                "LIVE_STREAM_STOP",
+                f"ADB screencap: {frames} frames, {size_mb:.1f}MB → {out_dir}",
+                True,
+            )
+
+            ui.ok(f"Stream beendet: {frames} Frames → {out_dir}")
             ui.pause()
 
         except Exception as e:
-            ui.err(f"Simulator-Fehler: {e}")
+            ui.err(f"ADB-Screencap-Fehler: {e}")
+            self.audit_log.log_event("LIVE_STREAM_ERROR", str(e)[:100], False)
             ui.pause()
 
     def start_video_recording(self) -> None:

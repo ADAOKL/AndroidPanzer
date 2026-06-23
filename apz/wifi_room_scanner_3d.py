@@ -827,6 +827,6 @@ def create_wifi_3d_scanner(adb: ADB) -> WiFi3DScanner:
 
 def menu(adb=None) -> None:
     """WiFiRoomScanner3D Menu Wrapper."""
-    obj = WiFiRoomScanner3D(adb) if adb else WiFiRoomScanner3D()
-    obj.show_3d_menu()
+    obj = WiFi3DScanner(adb) if adb else WiFi3DScanner()
+    obj.show_wifi_3d_scanner_menu()
 

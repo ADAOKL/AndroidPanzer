@@ -93,7 +93,11 @@ class DeepAnalysisScan:
 
         for i, (desc, func) in enumerate(steps, 1):
             ui.progress(i, len(steps), desc)
-            func()
+            try:
+                func()
+            except Exception as e:  # noqa: BLE001
+                # Vorbereitung darf nicht den gesamten Scan abbrechen
+                ui.warn(f"⚠  {desc}: {e}")
 
         ui.progress(len(steps), len(steps), "Vorbereitung abgeschlossen")
         print()
@@ -234,7 +238,7 @@ class DeepAnalysisScan:
             if feature_kind == "cmd":
                 output = self.adb.shell(feature["p"], timeout=30)
             elif feature_kind == "rootcmd":
-                output = self.adb.root_shell(feature["p"], timeout=30)
+                output = self.adb.shell(feature["p"], timeout=30, root=True)
             else:
                 result.status = "skipped"
                 return result
@@ -265,9 +269,8 @@ class DeepAnalysisScan:
     def _group_features_by_type(self) -> Dict[str, List[dict]]:
         """Gruppiert Features nach Typ."""
         groups = {}
-        for cat_idx, cat in enumerate(registry.REG):
-            cat_name = cat["name"]
-            for feature in cat.get("features", []):
+        for _icon, cat_name, feats in registry.CATEGORIES:
+            for feature in feats:
                 ftype = feature.get("k", "unknown")
                 key = f"{cat_name} [{ftype}]"
                 if key not in groups:
@@ -330,7 +333,9 @@ class DeepAnalysisScan:
     def _check_adb(self) -> None:
         """Prüft ADB-Verbindung."""
         try:
-            self.adb.devices()
+            devs = self.adb.list_devices()
+            if not devs:
+                raise Exception("Keine Geräte gefunden")
         except Exception as e:
             raise Exception(f"ADB nicht verbunden: {e}")
 

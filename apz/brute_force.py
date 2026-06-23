@@ -827,9 +827,102 @@ class BruteForceArsenal:
                 ui.progress(i, len(wordlist), f"Versuche: {i}/{len(wordlist)}")
 
     def _try_password(self, target: BruteForceTarget, password: str) -> bool:
-        """Versucht mit Passwort zu cracken."""
-        # Simuliere Cracking-Versuch
-        # In echtem System: versuche mit Passwort zu dekryptieren
+        """Echter Cracking-Versuch je nach TargetType.
+
+        @security Sensibles Modul: Passwörter werden niemals im Klartext gespeichert;
+                  nur Rückgabe True/False.
+        """
+        import subprocess
+        import zipfile as _zipfile
+        import hashlib as _hashlib
+
+        try:
+            # --- ZIP/RAR/7z Archive ---
+            if target.target_type == TargetType.ZIP_ARCHIVE:
+                path = target.target_path
+                if not os.path.isfile(path):
+                    return False
+                try:
+                    with _zipfile.ZipFile(path, "r") as zf:
+                        zf.extractall(path=os.devnull, pwd=password.encode())
+                    return True
+                except (_zipfile.BadZipFile, RuntimeError):
+                    pass
+                # 7z/RAR via subprocess
+                if os.path.splitext(path)[1].lower() in (".7z", ".rar"):
+                    r = subprocess.run(
+                        ["7z", "t", f"-p{password}", path],
+                        capture_output=True, timeout=5,
+                    )
+                    return r.returncode == 0
+                return False
+
+            # --- SSH private key ---
+            if target.target_type == TargetType.SSH_KEY:
+                path = target.target_path
+                if not os.path.isfile(path):
+                    return False
+                # ssh-keygen -y decrypts the private key if password correct
+                r = subprocess.run(
+                    ["ssh-keygen", "-y", "-f", path, "-P", password],
+                    capture_output=True, timeout=8,
+                )
+                return r.returncode == 0
+
+            # --- Device PIN via ADB ---
+            if target.target_type in (TargetType.DEVICE_PIN, TargetType.PIN_CODE):
+                if not self.adb:
+                    return False
+                # Versuche PIN über ADB input keyevent
+                pin = password.strip()
+                if not pin.isdigit():
+                    return False
+                self.adb.shell("input keyevent 26 2>/dev/null")  # Power/wake
+                time.sleep(0.3)
+                self.adb.shell("input keyevent 82 2>/dev/null")  # Menu/unlock
+                time.sleep(0.2)
+                for digit in pin:
+                    self.adb.shell(f"input text {digit}")
+                    time.sleep(0.05)
+                self.adb.shell("input keyevent 66 2>/dev/null")  # Enter
+                time.sleep(0.5)
+                # Prüfe ob entsperrt
+                unlock_check = self.adb.shell(
+                    "dumpsys window | grep 'mDreamingLockscreen'", timeout=5
+                )
+                return "false" in unlock_check.lower()
+
+            # --- App-Datenbank (SQLite/SQLCipher) ---
+            if target.target_type in (TargetType.APP_DATABASE,):
+                path = target.target_path
+                if not os.path.isfile(path):
+                    return False
+                # Versuche SQLCipher via sqlcipher CLI
+                r = subprocess.run(
+                    ["sqlcipher", path, f"PRAGMA key='{password}';", "SELECT count(*) FROM sqlite_master;"],
+                    capture_output=True, timeout=8,
+                )
+                return r.returncode == 0 and r.stdout.strip().isdigit()
+
+            # --- hashcat für Hash-Dateien ---
+            if target.target_type == TargetType.CUSTOM_CRYPTO:
+                path = target.target_path
+                if not os.path.isfile(path):
+                    return False
+                with open(path, "r", errors="ignore") as f:
+                    target_hash = f.read().strip().split("\n")[0]
+                # MD5 / SHA256 schnell prüfen
+                if len(target_hash) == 32:
+                    return _hashlib.md5(password.encode()).hexdigest() == target_hash
+                if len(target_hash) == 64:
+                    return _hashlib.sha256(password.encode()).hexdigest() == target_hash
+                return False
+
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+            pass
+        except Exception:
+            pass
+
         return False
 
 

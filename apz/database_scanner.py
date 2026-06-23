@@ -547,68 +547,74 @@ class DatabaseScanner:
     # PRIVATE METHODEN
 
     def _simulate_database_discovery(self) -> List[Database]:
-        """Simuliert Datenbank-Entdeckung."""
-        import random
+        """Echte Datenbank-Entdeckung via ADB find /data/data."""
+        db_list: List[Database] = []
 
-        db_list = [
-            Database(
-                db_id="db_1",
-                db_name="messages.db",
-                db_type=DatabaseType.SQLITE,
-                app_name="WhatsApp",
-                db_path="/data/data/com.whatsapp/databases/msgstore.db",
-                file_size=50*1024*1024,
-                table_count=15,
-                record_count=50000,
-                accessible=True,
-            ),
-            Database(
-                db_id="db_2",
-                db_name="accounts.db",
-                db_type=DatabaseType.SQLITE,
-                app_name="Gmail",
-                db_path="/data/data/com.google.android.gm/databases/",
-                file_size=20*1024*1024,
-                table_count=12,
-                record_count=5000,
-                accessible=True,
-            ),
-            Database(
-                db_id="db_3",
-                db_name="firebase.db",
-                db_type=DatabaseType.FIREBASE_REALTIME,
-                app_name="Custom App",
-                db_path="/data/data/com.example.app/",
-                file_size=100*1024*1024,
-                table_count=50,
-                record_count=100000,
-                encrypted=True,
-                accessible=False,
-            ),
-            Database(
-                db_id="db_4",
-                db_name="realm.db",
-                db_type=DatabaseType.REALM,
-                app_name="Banking App",
-                db_path="/data/data/com.bank.app/files/",
-                file_size=15*1024*1024,
-                table_count=8,
-                record_count=10000,
-                encrypted=True,
-                accessible=False,
-            ),
-            Database(
-                db_id="db_5",
-                db_name="room.db",
-                db_type=DatabaseType.ROOM,
-                app_name="Notes App",
-                db_path="/data/data/com.notes.app/databases/",
-                file_size=5*1024*1024,
-                table_count=4,
-                record_count=500,
-                accessible=True,
-            ),
-        ]
+        if not self.adb:
+            ui.warn("Kein ADB – keine Datenbanken gefunden")
+            return db_list
+
+        try:
+            # Suche alle .db und .realm Dateien (benötigt root)
+            out = self.adb.shell(
+                "find /data/data -name '*.db' -o -name '*.realm' 2>/dev/null",
+                timeout=30, root=True,
+            )
+            paths = [p.strip() for p in out.splitlines() if p.strip() and not p.startswith("find:")]
+
+            # Fallback: ohne root via adb backup-Pfad
+            if not paths:
+                out2 = self.adb.shell(
+                    "find /sdcard /data/local/tmp -name '*.db' 2>/dev/null", timeout=20
+                )
+                paths = [p.strip() for p in out2.splitlines() if p.strip() and not p.startswith("find:")]
+
+            for i, path in enumerate(paths[:50], 1):  # maximal 50
+                db_name = os.path.basename(path)
+                # Leite App-Namen aus Pfad ab (/data/data/com.pkg.name/...)
+                parts = path.split("/")
+                app_pkg = parts[3] if len(parts) > 3 else "unknown"
+                app_name = app_pkg.rsplit(".", 1)[-1] if "." in app_pkg else app_pkg
+
+                # Dateigröße ermitteln
+                size_out = self.adb.shell(f"stat -c %s '{path}' 2>/dev/null", timeout=5, root=True)
+                try:
+                    file_size = int(size_out.strip())
+                except (ValueError, TypeError):
+                    file_size = 0
+
+                # DB-Typ erkennen
+                if db_name.endswith(".realm"):
+                    db_type = DatabaseType.REALM
+                    encrypted = True
+                    accessible = False
+                else:
+                    # SQLite magic bytes prüfen
+                    magic = self.adb.shell(
+                        f"dd if='{path}' bs=1 count=16 2>/dev/null | od -A n -t x1 | head -1",
+                        timeout=5, root=True,
+                    )
+                    if "53 51 4c" in magic.lower() or "sqlite" in magic.lower():
+                        db_type = DatabaseType.SQLITE
+                    else:
+                        db_type = DatabaseType.SQLITE  # default
+                    encrypted = "cipher" in db_name.lower() or "enc" in db_name.lower()
+                    accessible = not encrypted
+
+                db_list.append(Database(
+                    db_id=f"db_{i}",
+                    db_name=db_name,
+                    db_type=db_type,
+                    app_name=app_name,
+                    db_path=path,
+                    file_size=file_size,
+                    table_count=0,
+                    record_count=0,
+                    encrypted=encrypted,
+                    accessible=accessible,
+                ))
+        except Exception as e:
+            ui.warn(f"DB-Discovery fehlgeschlagen: {e}")
 
         return db_list
 
@@ -620,7 +626,7 @@ class DatabaseScanner:
             methods.append(AccessMethod.DIRECT_FILE)
             methods.append(AccessMethod.ADB_PULL)
 
-        if random.random() > 0.5:
+        if self.adb and self.adb.check_root():
             methods.append(AccessMethod.ROOT_EXPLOIT)
 
         return methods
@@ -734,4 +740,4 @@ def create_database_scanner(adb: ADB) -> DatabaseScanner:
 def menu(adb=None) -> None:
     """DatabaseScanner Menu Wrapper."""
     obj = DatabaseScanner(adb) if adb else DatabaseScanner()
-    obj.show_scanner_menu()
+    obj.show_database_scanner_menu()

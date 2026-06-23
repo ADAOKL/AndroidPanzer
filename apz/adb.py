@@ -88,13 +88,47 @@ class ADB:
         return any(m in low for m in self._TRANSIENT)
 
     def _recover(self) -> None:
-        """Versucht, eine weggebrochene ADB-Verbindung wiederherzustellen."""
+        """Versucht, eine weggebrochene ADB-Verbindung wiederherzustellen.
+
+        Stufenplan:
+          1. adb reconnect  (soft – Server bleibt)
+          2. wait-for-device (8 s)
+          3. Falls immer noch tot: kill-server + start-server + wait (20 s)
+        """
         try:
             self.raw(["reconnect"], timeout=8)
         except Exception:  # noqa: BLE001
             pass
-        # kurz auf das Gerät warten (begrenzt, damit es nicht ewig hängt)
-        self.raw(["wait-for-device"], timeout=8)
+        rc, _, _ = self.raw(["wait-for-device"], timeout=8)
+        if rc == 0:
+            return
+        # Stufe 2: harter Server-Neustart
+        try:
+            subprocess.run([self.bin, "kill-server"], capture_output=True, timeout=10)
+            subprocess.run([self.bin, "start-server"], capture_output=True, timeout=15)
+        except Exception:  # noqa: BLE001
+            pass
+        self.raw(["wait-for-device"], timeout=20)
+
+    def is_connected(self) -> bool:
+        """Schnelle Prüfung ob das Gerät noch erreichbar ist (< 3 s)."""
+        rc, out, _ = self.raw(["shell", "echo ping"], timeout=3)
+        return rc == 0 and "ping" in out
+
+    def ensure_connected(self, max_wait: int = 30) -> bool:
+        """Stellt sicher dass eine Verbindung besteht; wartet max *max_wait* Sekunden.
+
+        Gibt True zurück wenn das Gerät (wieder) erreichbar ist.
+        """
+        if self.is_connected():
+            return True
+        self._recover()
+        deadline = time.time() + max_wait
+        while time.time() < deadline:
+            if self.is_connected():
+                return True
+            time.sleep(1.5)
+        return False
 
     def shell(self, cmd: str, timeout: int | None = None, root: bool = False,
               retries: int = 2) -> str:
@@ -214,9 +248,21 @@ class ADB:
 
     @classmethod
     def start_server(cls) -> None:
+        """Startet den ADB-Server; bei Fehler wird einmal kill+restart versucht."""
         try:
-            subprocess.run([adb_path(), "start-server"], capture_output=True, text=True, timeout=15)
-        except Exception:
+            p = subprocess.run(
+                [adb_path(), "start-server"],
+                capture_output=True, text=True, timeout=15,
+            )
+            if p.returncode == 0:
+                return
+        except Exception:  # noqa: BLE001
+            pass
+        # Fallback: Server hart neu starten
+        try:
+            subprocess.run([adb_path(), "kill-server"], capture_output=True, timeout=10)
+            subprocess.run([adb_path(), "start-server"], capture_output=True, timeout=15)
+        except Exception:  # noqa: BLE001
             pass
 
     @classmethod

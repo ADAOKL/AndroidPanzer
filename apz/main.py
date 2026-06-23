@@ -293,43 +293,40 @@ def _numeric_main_menu(adb: ADB, dev: Device, st: dict, data: dict) -> None:
                 acquire.menu(adb, dev, st, data)
             elif choice_lower == "22":
                 # App Decryption
-                app_decryption.menu(adb, dev, st)
+                app_decryption.menu(adb)
             elif choice_lower == "23":
                 # Brute Force
-                brute_force.menu(adb, dev, st)
+                brute_force.menu(adb)
             elif choice_lower == "24":
                 # WiFi Handshake
-                wifi_handshake.menu(adb, dev, st)
+                wifi_handshake.menu(adb)
             elif choice_lower == "25":
                 # DNS Guardian
-                dns_guardian.menu(adb, dev, st)
+                dns_guardian.menu(adb)
             elif choice_lower == "26":
                 # Tracker System
-                tracker_system.menu(adb, dev, st)
+                tracker_system.menu(adb)
             elif choice_lower == "27":
                 # Intelligent Engine
-                intelligent_engine.menu(adb, dev, st)
+                intelligent_engine.menu(adb)
             elif choice_lower == "28":
                 # Database Scanner
-                database_scanner.menu(adb, dev, st)
+                database_scanner.menu(adb)
             elif choice_lower == "29":
                 # Lab Manager
-                lm = lab_manager.create_lab_manager(adb)
-                lm.show_lab_manager_menu()
+                lab_manager.menu(adb)
             elif choice_lower == "30":
                 # 3D WiFi Scanner
-                scanner_3d = wifi_room_scanner_3d.create_wifi_3d_scanner(adb)
-                scanner_3d.show_wifi_3d_scanner_menu()
+                wifi_room_scanner_3d.menu(adb)
             elif choice_lower == "31":
                 # Adult Activity Detector
-                detector = adult_activity_detector.create_adult_activity_detector(adb)
-                detector.show_adult_detector_menu()
+                adult_activity_detector.menu(adb)
             elif choice_lower == "32":
                 # Anomaly Detector
-                anomaly_detector.show_anomaly_menu(adb)
+                anomaly_detector.menu(adb)
             elif choice_lower == "33":
                 # AI Doctor
-                ai_doctor.show_ai_doctor_menu(adb, st)
+                ai_doctor.menu(adb)
             else:
                 ui.warn("Ungültige Option!")
                 time.sleep(0.5)

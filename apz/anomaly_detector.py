@@ -667,4 +667,4 @@ def create_anomaly_detector(adb: ADB) -> AnomalyAnalyzer:
 def menu(adb=None) -> None:
     """AnomalyDetector Menu Wrapper."""
     obj = AnomalyDetector(adb) if adb else AnomalyDetector()
-    obj.show_anomaly_menu()
+    obj.show_anomaly_detector_menu()

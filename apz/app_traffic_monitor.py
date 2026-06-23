@@ -764,32 +764,1127 @@ def export_all(adb: ADB, dev=None, st=None, data=None) -> None:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  HAUPTMENÜ
+#  5. PRO-APP DOMAIN-PROFIL
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def per_app_domain_profile(adb: ADB, dev=None, st=None, data=None) -> None:
+    """Zeigt für jede App alle ihre Domains + Subdomains + Kategorien."""
+    ui.clear()
+    ui.rule("📱 PRO-APP DOMAIN-PROFIL", ui.BCYAN)
+    print()
+    ui.info("Lade UID→Package-Mapping …")
+    uid_pkg = _uid_to_pkg(adb)
+
+    ui.info("Lese DNS-Einträge aus logcat (bis zu 500 Zeilen) …")
+    raw = adb.shell(
+        "logcat -d -t 500 2>/dev/null | grep -iE 'DnsResolver|getaddrinfo|resolv|dns' | tail -n 200")
+    raw2 = adb.shell(
+        "logcat -d 2>/dev/null | grep -iE 'hostname|connect|lookup' | tail -n 150")
+
+    # Domain + UID aus logcat parsen
+    app_domains: dict[str, set] = {}   # pkg_name → {domains}
+    app_tracker_count: dict[str, int] = {}
+
+    for line in (raw + "\n" + raw2).splitlines():
+        # UID aus logcat-Zeile
+        uid_m = re.search(r'\buid[=:\s]+(\d+)', line, re.I)
+        # Alternativ: PID suchen und dann UID
+        pkg = "system"
+        if uid_m:
+            uid = uid_m.group(1)
+            pkg = uid_pkg.get(uid, f"uid:{uid}")
+        # Domain extrahieren
+        domain = None
+        for pat in [
+            r'getaddrinfo\("([a-zA-Z0-9._-]+\.[a-zA-Z]{2,})"',
+            r'(?:lookup|resolv|hostname)[:\s=]+([a-zA-Z0-9._-]{4,}\.[a-zA-Z]{2,})',
+            r'"([a-zA-Z0-9._-]{6,}\.[a-zA-Z]{2,})"',
+        ]:
+            m = re.search(pat, line, re.I)
+            if m:
+                d = m.group(1).lower().strip('.')
+                if len(d) > 4 and '.' in d and not re.match(r'^\d+\.\d+', d):
+                    domain = d
+                    break
+        if domain:
+            if pkg not in app_domains:
+                app_domains[pkg] = set()
+                app_tracker_count[pkg] = 0
+            app_domains[pkg].add(domain)
+            if _is_tracker(domain) or _is_malware(domain):
+                app_tracker_count[pkg] = app_tracker_count.get(pkg, 0) + 1
+
+    if not app_domains:
+        ui.warn("Keine App-Domain-Zuordnungen gefunden.")
+        ui.info("Tipp: Nutze das Gerät aktiv, dann erneut prüfen.")
+        ui.pause()
+        return
+
+    # Sortieren: Apps mit den meisten Domains oben
+    sorted_apps = sorted(app_domains.items(), key=lambda x: len(x[1]), reverse=True)
+
+    ui.clear()
+    ui.rule("📱 PRO-APP DOMAIN-PROFIL", ui.BCYAN)
+    print()
+
+    lines_export = [f"# Pro-App Domain-Profil  {time.strftime('%Y-%m-%d %H:%M:%S')}\n"]
+
+    for pkg, domains in sorted_apps[:30]:
+        tc = app_tracker_count.get(pkg, 0)
+        col = ui.BRED if tc > 0 else ui.BGREEN
+        print(f"  {col}{ui.BOLD}{pkg}{ui.RESET}  "
+              f"({len(domains)} Domains, {ui.BYELLOW}{tc} Tracker{ui.RESET})")
+        lines_export.append(f"\n[{pkg}]  {len(domains)} Domains  {tc} Tracker")
+        for domain in sorted(domains)[:25]:
+            cat, dcol_key = _cat_domain(domain)
+            dcol = _COLOR_MAP.get(dcol_key, ui.GREY)
+            flag = ""
+            if _is_malware(domain):
+                flag = f" {ui.BRED}☠MALWARE{ui.RESET}"
+            elif _is_tracker(domain):
+                flag = f" {ui.BYELLOW}[T]{ui.RESET}"
+            print(f"      {dcol}{domain:<45}{ui.RESET}  [{cat}]{flag}")
+            lines_export.append(f"  {domain:<45}  [{cat}]"
+                                 + (" [TRACKER]" if _is_tracker(domain) else "")
+                                 + (" [MALWARE]" if _is_malware(domain) else ""))
+        if len(domains) > 25:
+            print(f"      {ui.GREY}… und {len(domains)-25} weitere Domains{ui.RESET}")
+        print()
+
+    print(f"  {ui.BOLD}Gesamt: {len(sorted_apps)} Apps · "
+          f"{sum(len(v) for v in app_domains.values())} unique Domains{ui.RESET}")
+
+    if ui.confirm("Als TXT exportieren?", True):
+        fn = os.path.join(OUT, f"app_domains_{int(time.time())}.txt")
+        with open(fn, "w") as f:
+            f.write("\n".join(lines_export))
+        ui.ok(f"Gespeichert: {fn}")
+    ui.pause()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  6. DOMAIN-TIMELINE
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def domain_timeline(adb: ADB, dev=None, st=None, data=None) -> None:
+    """Zeitverlauf aller Domain-Aufrufe — wann wurde was aufgerufen."""
+    ui.clear()
+    ui.rule("📅 DOMAIN-TIMELINE", ui.BCYAN)
+    print()
+    ui.info("Lese logcat mit Zeitstempeln …")
+
+    uid_pkg = _uid_to_pkg(adb)
+    raw = adb.shell(
+        "logcat -d -v time 2>/dev/null | "
+        "grep -iE 'DnsResolver|getaddrinfo|resolv|dns|hostname|connect' | "
+        "tail -n 300")
+
+    # Einträge: (zeit_str, domain, pkg, kategorie, is_tracker, is_malware)
+    entries = []
+    for line in raw.splitlines():
+        # Zeit: MM-DD HH:MM:SS.mmm
+        ts_m = re.match(r'(\d{2}-\d{2} \d{2}:\d{2}:\d{2})', line)
+        ts_str = ts_m.group(1) if ts_m else "??:??:??"
+        # UID
+        uid_m = re.search(r'\buid[=:\s]+(\d+)', line, re.I)
+        pkg = uid_pkg.get(uid_m.group(1), "sys") if uid_m else "sys"
+        # Domain
+        domain = None
+        for pat in [
+            r'getaddrinfo\("([a-zA-Z0-9._-]+\.[a-zA-Z]{2,})"',
+            r'(?:lookup|resolv|dns)[:\s]+([a-zA-Z0-9._-]{4,}\.[a-zA-Z]{2,})',
+        ]:
+            m = re.search(pat, line, re.I)
+            if m:
+                d = m.group(1).lower().strip('.')
+                if len(d) > 4 and '.' in d:
+                    domain = d
+                    break
+        if domain:
+            cat, _ = _cat_domain(domain)
+            entries.append((ts_str, domain, pkg, cat,
+                            _is_tracker(domain), _is_malware(domain)))
+
+    # Filter-Menü
+    f_choice = ui.menu("Filter", [
+        ("1", "Alle Einträge anzeigen"),
+        ("2", "Nur Tracker & Malware"),
+        ("3", "Nur Social-Media"),
+        ("4", "Nur Werbung/Tracking"),
+        ("5", "Nur unbekannte Domains"),
+    ], back_label="Zurück")
+    if f_choice == "back":
+        return
+
+    ui.clear()
+    ui.rule("📅 DOMAIN-TIMELINE", ui.BCYAN)
+    print(f"\n  {'Zeit':<17} {'Domain':<40} {'App':<20} {'Kategorie':<14}  !  \n")
+
+    filtered = []
+    for ts, dom, pkg, cat, is_t, is_m in entries:
+        if f_choice == "2" and not (is_t or is_m):
+            continue
+        if f_choice == "3" and cat != "Social":
+            continue
+        if f_choice == "4" and cat not in ("Werbung", "Tracking", "Analytics"):
+            continue
+        if f_choice == "5" and cat != "Unbekannt":
+            continue
+        filtered.append((ts, dom, pkg, cat, is_t, is_m))
+
+    # Zeitgruppen
+    if filtered:
+        print(f"  {ui.GREY}{'─'*95}{ui.RESET}")
+        last_ts_prefix = ""
+        for ts, dom, pkg, cat, is_t, is_m in filtered[-60:]:
+            # Neue Zeitgruppe?
+            ts_prefix = ts[:8] if len(ts) >= 8 else ts
+            if ts_prefix != last_ts_prefix:
+                print(f"\n  {ui.BOLD}── {ts_prefix} ──{ui.RESET}")
+                last_ts_prefix = ts_prefix
+            flag = ""
+            if is_m:
+                flag = f"{ui.BRED}☠{ui.RESET}"
+            elif is_t:
+                flag = f"{ui.BYELLOW}T{ui.RESET}"
+            col = ui.BRED if is_m else (ui.BYELLOW if is_t else ui.BCYAN)
+            print(f"  {ui.GREY}{ts[5:]:>11}{ui.RESET}  {col}{dom:<40}{ui.RESET}  "
+                  f"{ui.GREY}{pkg[:18]:<20}{ui.RESET}  [{cat:<12}]  {flag}")
+    else:
+        ui.warn("Keine Einträge für diesen Filter.")
+
+    print(f"\n  {ui.BOLD}Gesamt: {len(filtered)} von {len(entries)} Einträgen{ui.RESET}")
+
+    if ui.confirm("Als CSV exportieren?", True):
+        fn = os.path.join(OUT, f"timeline_{int(time.time())}.csv")
+        with open(fn, "w") as f:
+            f.write("Zeit,Domain,App,Kategorie,Tracker,Malware\n")
+            for ts, dom, pkg, cat, is_t, is_m in filtered:
+                f.write(f"{ts},{dom},{pkg},{cat},{int(is_t)},{int(is_m)}\n")
+        ui.ok(f"CSV: {fn}")
+    ui.pause()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  7. DOMAIN-BLOCKER
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def domain_blocker(adb: ADB, dev=None, st=None, data=None) -> None:
+    """Domains via ADB sperren — /etc/hosts oder NetworkPolicy."""
+    ui.clear()
+    ui.rule("🔒 DOMAIN-BLOCKER", ui.BCYAN)
+    is_root = bool((st or {}).get("is_root"))
+    print()
+
+    # Root-Check
+    root_test = adb.shell("id 2>/dev/null")
+    has_root = "uid=0" in root_test or "root" in root_test.lower()
+
+    # Aktuelle /etc/hosts
+    hosts_raw = adb.shell("cat /etc/hosts 2>/dev/null")
+    current_blocks = [l.strip() for l in hosts_raw.splitlines()
+                      if l.strip().startswith("0.0.0.0") or l.strip().startswith("127.0.0.1")]
+
+    print(f"  Root-Zugriff:  {'✓ JA' if has_root else '✗ NEIN (nur Anzeige-Modus)'}\n")
+    print(f"  Aktuelle Blocks in /etc/hosts: {len(current_blocks)}")
+    for b in current_blocks[:10]:
+        print(f"    {ui.GREY}{b}{ui.RESET}")
+    if len(current_blocks) > 10:
+        print(f"    {ui.GREY}… und {len(current_blocks)-10} weitere{ui.RESET}")
+    print()
+
+    ch = ui.menu("Aktion", [
+        ("1", "Alle bekannten Tracker blockieren (KNOWN_TRACKERS)"),
+        ("2", "Alle bekannten Malware-Domains blockieren"),
+        ("3", "Einzelne Domain manuell blockieren"),
+        ("4", "Alle Blocks anzeigen"),
+        ("5", "Alle Panzer-Blocks entfernen"),
+        ("6", "ADB-NetworkPolicy (ohne Root) — App-Netzwerk sperren"),
+        ("7", "Empfohlene DNS-Server setzen"),
+    ], back_label="Zurück")
+    if ch == "back":
+        return
+
+    def _block_via_hosts(domains: list[str], label: str) -> None:
+        if not has_root:
+            ui.warn("Kein Root — zeige Befehle zum manuellen Ausführen:")
+            for d in domains[:10]:
+                print(f"  {ui.GREY}adb shell \"su -c 'echo 0.0.0.0 {d} >> /etc/hosts'\"  {ui.RESET}")
+            return
+        count = 0
+        for d in domains:
+            result = adb.shell(
+                f"su -c 'echo 0.0.0.0 {d} >> /etc/hosts' 2>&1")
+            if not result.strip() or "success" in result.lower():
+                count += 1
+        ui.ok(f"{count} {label} blockiert via /etc/hosts")
+        # DNS-Cache leeren
+        adb.shell("su -c 'ndc resolver flushdefaultif 2>/dev/null || true'")
+
+    if ch == "1":
+        if ui.confirm(f"Alle {len(KNOWN_TRACKERS)} Tracker blockieren?", False):
+            _block_via_hosts(list(KNOWN_TRACKERS), "Tracker")
+
+    elif ch == "2":
+        if ui.confirm(f"Alle {len(MALWARE_DOMAINS)} Malware-Domains blockieren?", True):
+            _block_via_hosts(list(MALWARE_DOMAINS), "Malware-Domains")
+
+    elif ch == "3":
+        print(f"\n  {ui.BOLD}Domain eingeben (z.B. tracker.com):{ui.RESET} ", end="")
+        try:
+            domain = input().strip()
+        except (EOFError, KeyboardInterrupt):
+            domain = ""
+        if domain and '.' in domain:
+            _block_via_hosts([domain, f"www.{domain}"], "Domains")
+        else:
+            ui.warn("Ungültige Domain.")
+
+    elif ch == "4":
+        hosts = adb.shell("cat /etc/hosts 2>/dev/null")
+        print(f"\n{ui.GREY}{hosts[:2000]}{ui.RESET}")
+
+    elif ch == "5":
+        if has_root and ui.confirm("Alle 0.0.0.0-Einträge aus /etc/hosts entfernen?", False):
+            adb.shell("su -c \"grep -v '^0\\.0\\.0\\.0' /etc/hosts > /tmp/hosts.tmp && "
+                      "cp /tmp/hosts.tmp /etc/hosts\" 2>&1")
+            ui.ok("Blocks entfernt.")
+
+    elif ch == "6":
+        ui.rule("NetworkPolicy (kein Root nötig)", ui.BCYAN)
+        uid_pkg = _uid_to_pkg(adb)
+        print(f"\n  {ui.GREY}Bekannte UIDs:{ui.RESET}")
+        for uid, pkg in list(uid_pkg.items())[:15]:
+            print(f"    UID {uid:<6}  {pkg}")
+        print(f"\n  {ui.BOLD}Befehl zum Netz-Sperren einer App:{ui.RESET}")
+        print(f"  {ui.GREY}adb shell cmd netpolicy set-app-policy <UID> POLICY_REJECT_ALL{ui.RESET}")
+        print(f"\n  {ui.BOLD}App wieder freigeben:{ui.RESET}")
+        print(f"  {ui.GREY}adb shell cmd netpolicy set-app-policy <UID> POLICY_NONE{ui.RESET}")
+
+    elif ch == "7":
+        ui.rule("DNS-Server empfehlen", ui.BCYAN)
+        print(f"\n  {ui.BGREEN}Cloudflare (privat, schnell):{ui.RESET}")
+        print(f"    {ui.GREY}adb shell settings put global private_dns_mode hostname{ui.RESET}")
+        print(f"    {ui.GREY}adb shell settings put global private_dns_specifier 1dot1dot1dot1.cloudflare-dns.com{ui.RESET}")
+        print(f"\n  {ui.BGREEN}Quad9 (malware-blockierend):{ui.RESET}")
+        print(f"    {ui.GREY}adb shell settings put global private_dns_specifier dns.quad9.net{ui.RESET}")
+        print(f"\n  {ui.BGREEN}AdGuard (Werbung + Tracker blockierend):{ui.RESET}")
+        print(f"    {ui.GREY}adb shell settings put global private_dns_specifier dns.adguard.com{ui.RESET}")
+
+    ui.pause()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  8. IP-GEOLOKALISIERUNG
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_KNOWN_RANGES: list[tuple[str, str, str]] = [
+    # (prefix, org, land)
+    ("1.1.1.",    "Cloudflare",       "US"),
+    ("1.0.0.",    "Cloudflare",       "US"),
+    ("8.8.",      "Google DNS",       "US"),
+    ("8.34.",     "Google",           "US"),
+    ("8.35.",     "Google",           "US"),
+    ("34.",       "Google Cloud",     "US"),
+    ("35.",       "Google Cloud",     "US"),
+    ("142.250.",  "Google",           "US"),
+    ("142.251.",  "Google",           "US"),
+    ("172.64.",   "Cloudflare",       "US"),
+    ("172.65.",   "Cloudflare",       "US"),
+    ("162.159.",  "Cloudflare",       "US"),
+    ("104.16.",   "Cloudflare",       "US"),
+    ("104.17.",   "Cloudflare",       "US"),
+    ("13.",       "Amazon AWS",       "US"),
+    ("52.",       "Amazon AWS",       "US"),
+    ("54.",       "Amazon AWS",       "US"),
+    ("3.",        "Amazon AWS",       "US"),
+    ("18.",       "Amazon AWS",       "US"),
+    ("31.13.",    "Facebook/Meta",    "US"),
+    ("157.240.",  "Facebook/Meta",    "US"),
+    ("185.60.",   "Facebook/Meta",    "US"),
+    ("20.",       "Microsoft Azure",  "US"),
+    ("40.",       "Microsoft Azure",  "US"),
+    ("51.",       "Microsoft Azure",  "EU"),
+    ("204.79.",   "Microsoft",        "US"),
+    ("216.239.",  "Google",           "US"),
+    ("216.58.",   "Google",           "US"),
+    ("74.125.",   "Google",           "US"),
+    ("64.233.",   "Google",           "US"),
+    ("195.",      "European ISP",     "EU"),
+    ("212.",      "European ISP",     "EU"),
+    ("5.",        "Various EU",       "EU"),
+    ("89.",       "Various EU",       "EU"),
+    ("91.",       "Various EU",       "EU"),
+    ("178.",      "Various",          "EU"),
+    ("185.",      "Various",          "EU"),
+    ("194.",      "Various EU",       "EU"),
+]
+
+
+def _lookup_ip_org(ip: str) -> tuple[str, str]:
+    """Gibt (Org, Land) für bekannte IP-Ranges zurück."""
+    for prefix, org, country in _KNOWN_RANGES:
+        if ip.startswith(prefix):
+            return org, country
+    return "Unbekannt", "?"
+
+
+def ip_geolocate(adb: ADB, dev=None, st=None, data=None) -> None:
+    """IP-Geolokalisierung aller aktiven Verbindungen."""
+    ui.clear()
+    ui.rule("🌍 IP-GEOLOKALISIERUNG", ui.BCYAN)
+    print()
+    ui.info("Lese aktive Verbindungen …")
+
+    conn_raw = adb.shell(
+        "ss -tnp 2>/dev/null | grep ESTAB | head -n 20 || "
+        "netstat -tnp 2>/dev/null | grep ESTABLISHED | head -n 20")
+
+    # IPs sammeln
+    ips_seen: dict[str, str] = {}   # ip → proc_info
+    for line in conn_raw.splitlines():
+        parts = line.split()
+        if len(parts) < 4:
+            continue
+        remote = parts[4] if len(parts) > 4 else parts[3]
+        ip_m = re.match(r'[\[]?([0-9a-fA-F.:]+)[\]]?:(\d+)', remote)
+        if not ip_m:
+            continue
+        ip = ip_m.group(1)
+        if ip in ('0.0.0.0', '::', '::1', '127.0.0.1'):
+            continue
+        proc = parts[-1] if '(' in parts[-1] or '"' in parts[-1] else ""
+        proc = re.sub(r'.*"([^"]+)".*', r'\1', proc)[:20]
+        ips_seen[ip] = proc
+
+    if not ips_seen:
+        ui.warn("Keine aktiven Verbindungen gefunden.")
+        ui.pause()
+        return
+
+    print(f"\n  {ui.BOLD}{'IP-Adresse':<22} {'Port':>6}  {'Hostname':<30} {'Org':<22} {'Land':<5} {'App':<18}{ui.RESET}")
+    print(f"  {'─'*105}")
+
+    results = []
+    for line in conn_raw.splitlines():
+        parts = line.split()
+        if len(parts) < 5:
+            continue
+        remote = parts[4]
+        ip_m = re.match(r'[\[]?([0-9a-fA-F.:]+)[\]]?:(\d+)', remote)
+        if not ip_m:
+            continue
+        ip = ip_m.group(1)
+        port = ip_m.group(2)
+        if ip in ('0.0.0.0', '::', '::1', '127.0.0.1'):
+            continue
+        org, country = _lookup_ip_org(ip)
+        # Reverse-DNS
+        ns_out = adb.shell(f"nslookup {ip} 2>/dev/null | tail -3")
+        hostname = ""
+        m = re.search(r'name\s*=\s*([a-zA-Z0-9._-]+)', ns_out, re.I)
+        if m:
+            hostname = m.group(1).rstrip('.')[:28]
+        proc = parts[-1] if '(' in parts[-1] or '"' in parts[-1] else ""
+        proc = re.sub(r'.*"([^"]+)".*', r'\1', proc)[:16]
+        # Port-Dienst
+        svc = {
+            "443": "HTTPS", "80": "HTTP", "53": "DNS", "8080": "HTTP-Alt",
+            "993": "IMAPS", "587": "SMTP", "25": "SMTP", "5228": "GCM",
+        }.get(port, "")
+        col = ui.BGREEN if org != "Unbekannt" else ui.GREY
+        print(f"  {col}{ip:<22}{ui.RESET} {port:>6}  "
+              f"{ui.BCYAN}{hostname or '—':<30}{ui.RESET} "
+              f"{org:<22} {ui.BOLD}{country:<5}{ui.RESET} {ui.GREY}{proc:<18}{ui.RESET}"
+              + (f"  [{svc}]" if svc else ""))
+        results.append({"ip": ip, "port": port, "hostname": hostname,
+                        "org": org, "country": country, "app": proc})
+
+    # Zusammenfassung
+    orgs = {}
+    for r in results:
+        orgs[r["org"]] = orgs.get(r["org"], 0) + 1
+    print(f"\n  {ui.BOLD}Verbindungen nach Org:{ui.RESET}")
+    for org, cnt in sorted(orgs.items(), key=lambda x: x[1], reverse=True):
+        bar = "█" * min(cnt * 3, 30)
+        print(f"  {ui.GREY}{org:<25}{ui.RESET} {ui.BCYAN}{bar}{ui.RESET} {cnt}")
+
+    if ui.confirm("Export speichern?", True):
+        fn = os.path.join(OUT, f"ip_geo_{int(time.time())}.txt")
+        with open(fn, "w") as f:
+            f.write(f"# IP-Geolokalisierung {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+            for r in results:
+                f.write(f"{r['ip']:<22}  {r['port']:>6}  {r['hostname']:<30}  "
+                        f"{r['org']:<22}  {r['country']}  [{r['app']}]\n")
+        ui.ok(f"Gespeichert: {fn}")
+    ui.pause()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  9. TLS/SSL INSPECTOR
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def tls_inspector(adb: ADB, dev=None, st=None, data=None) -> None:
+    """TLS/SSL-Versionen, Zertifikat-Fehler, schwache Verschlüsselung analysieren."""
+    ui.clear()
+    ui.rule("🔐 TLS/SSL INSPECTOR", ui.BCYAN)
+    print()
+    ui.info("Lese TLS-Ereignisse aus logcat …")
+
+    raw = adb.shell(
+        "logcat -d -t 300 2>/dev/null | grep -iE "
+        "'ssl|tls|cert|handshake|x509|trust|pin|cipher|HTTPS' | tail -n 200")
+
+    # Analyse
+    tls_versions: dict[str, int] = {}
+    cert_errors: list[str] = []
+    pinning_fails: list[str] = []
+    weak_ciphers: list[str] = []
+    app_tls: dict[str, set] = {}  # pkg → {tls_versions}
+
+    for line in raw.splitlines():
+        # TLS-Version
+        for v in ["TLSv1.3", "TLSv1.2", "TLSv1.1", "TLSv1.0", "SSLv3", "SSLv2"]:
+            if v.lower() in line.lower():
+                tls_versions[v] = tls_versions.get(v, 0) + 1
+                # App-Zuordnung
+                uid_m = re.search(r'uid[=:\s]+(\d+)', line, re.I)
+                # Ohne UID-Auflösung hier — zu teuer
+                break
+        # Zertifikat-Fehler
+        if re.search(r'cert.*error|invalid.*cert|expired|CertPathValidator|'
+                     r'SSLHandshakeException|CertificateException', line, re.I):
+            cert_errors.append(line.strip()[:120])
+        # Certificate Pinning
+        if re.search(r'pin|CertificatePinner|PublicKeyPinning|pinning.*fail', line, re.I):
+            pinning_fails.append(line.strip()[:120])
+        # Schwache Cipher
+        if re.search(r'RC4|DES|MD5|NULL.*cipher|EXPORT', line, re.I):
+            weak_ciphers.append(line.strip()[:120])
+
+    # Ausgabe
+    print(f"\n  {ui.BOLD}TLS-Versionen erkannt:{ui.RESET}")
+    for v, cnt in sorted(tls_versions.items(), key=lambda x: x[1], reverse=True):
+        if v in ("TLSv1.0", "TLSv1.1", "SSLv3", "SSLv2"):
+            col = ui.BRED
+            warn = "  ← UNSICHER"
+        elif v == "TLSv1.2":
+            col = ui.BYELLOW
+            warn = "  ← veraltet"
+        else:
+            col = ui.BGREEN
+            warn = "  ✓"
+        bar = "█" * min(cnt, 40)
+        print(f"  {col}{v:<12}{ui.RESET} {bar:<40} {cnt:>4}x{warn}")
+
+    if not tls_versions:
+        print(f"  {ui.GREY}(keine TLS-Ereignisse im logcat gefunden){ui.RESET}")
+
+    print()
+    if cert_errors:
+        print(f"  {ui.BRED}{ui.BOLD}⚠ ZERTIFIKAT-FEHLER ({len(cert_errors)}):{ui.RESET}")
+        for e in cert_errors[:6]:
+            print(f"    {ui.BRED}{e}{ui.RESET}")
+    else:
+        print(f"  {ui.BGREEN}✓ Keine Zertifikat-Fehler erkannt{ui.RESET}")
+
+    print()
+    if pinning_fails:
+        print(f"  {ui.BYELLOW}⚠ Certificate-Pinning-Events ({len(pinning_fails)}):{ui.RESET}")
+        for p in pinning_fails[:5]:
+            print(f"    {ui.BYELLOW}{p}{ui.RESET}")
+    else:
+        print(f"  {ui.BGREEN}✓ Kein Pinning-Problem erkannt{ui.RESET}")
+
+    print()
+    if weak_ciphers:
+        print(f"  {ui.BRED}⚠ SCHWACHE CIPHER ({len(weak_ciphers)}):{ui.RESET}")
+        for c in weak_ciphers[:4]:
+            print(f"    {ui.BRED}{c}{ui.RESET}")
+    else:
+        print(f"  {ui.BGREEN}✓ Keine schwachen Cipher erkannt{ui.RESET}")
+
+    # MITM-Hinweis
+    print(f"\n  {ui.GREY}MITM-Hinweis: Certificate-Pinning verhindert MITM auch bei kompromittiertem CA.")
+    print(f"  TLSv1.0/1.1 anfällig für POODLE, BEAST, CRIME. Upgrade auf 1.3 empfohlen.{ui.RESET}")
+
+    if ui.confirm("TLS-Report speichern?", False):
+        fn = os.path.join(OUT, f"tls_report_{int(time.time())}.txt")
+        with open(fn, "w") as f:
+            f.write(f"# TLS-Report {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+            f.write("TLS-Versionen:\n")
+            for v, cnt in tls_versions.items():
+                f.write(f"  {v}: {cnt}x\n")
+            f.write(f"\nZertifikat-Fehler ({len(cert_errors)}):\n")
+            for e in cert_errors:
+                f.write(f"  {e}\n")
+            f.write(f"\nPinning-Events ({len(pinning_fails)}):\n")
+            for p in pinning_fails:
+                f.write(f"  {p}\n")
+        ui.ok(f"TLS-Report: {fn}")
+    ui.pause()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 10. INTERNET-PERMISSION-SCAN
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def internet_permission_scan(adb: ADB, dev=None, st=None, data=None) -> None:
+    """Welche Apps haben INTERNET-Permission — mit Risiko-Score."""
+    ui.clear()
+    ui.rule("🌐 INTERNET-PERMISSION-SCAN", ui.BCYAN)
+    print()
+    ui.info("Lese alle Apps mit Netzwerk-Berechtigungen …")
+
+    # Alle UIDs mit INTERNET-Permission
+    raw = adb.shell(
+        "dumpsys package 2>/dev/null | grep -B 10 'android.permission.INTERNET' "
+        "| grep -E '^Package|packageName='")
+    # Zweite Methode: pm dump
+    raw2 = adb.shell(
+        "pm list packages -3 2>/dev/null")  # User-Apps
+
+    # Analyse: alle User-Apps mit INTERNET
+    user_apps = [l.replace("package:", "").strip()
+                 for l in raw2.splitlines() if l.startswith("package:")]
+
+    # Für Batch: dumpsys package alle Apps
+    all_dump = adb.shell("dumpsys package 2>/dev/null | grep -E 'Package \\[|INTERNET|CHANGE_NETWORK|BACKGROUND_SYNC|FOREGROUND_SERVICE|RECEIVE_BOOT|WAKE_LOCK'")
+
+    # Parsen
+    apps: list[dict] = []
+    current_pkg = ""
+    perms: set = set()
+
+    for line in all_dump.splitlines():
+        pkg_m = re.match(r'\s*Package \[([^\]]+)\]', line)
+        if pkg_m:
+            if current_pkg and "INTERNET" in perms:
+                apps.append({"pkg": current_pkg, "perms": set(perms)})
+            current_pkg = pkg_m.group(1)
+            perms = set()
+        for perm in ["INTERNET", "CHANGE_NETWORK_STATE", "ACCESS_NETWORK_STATE",
+                     "RECEIVE_BOOT_COMPLETED", "WAKE_LOCK", "FOREGROUND_SERVICE",
+                     "BACKGROUND_SYNC", "READ_PHONE_STATE"]:
+            if perm in line:
+                perms.add(perm)
+
+    if current_pkg and "INTERNET" in perms:
+        apps.append({"pkg": current_pkg, "perms": set(perms)})
+
+    def _risk(p: set) -> tuple[int, str]:
+        score = 1
+        reason = []
+        if "RECEIVE_BOOT_COMPLETED" in p:
+            score += 2; reason.append("Auto-Start")
+        if "FOREGROUND_SERVICE" in p:
+            score += 2; reason.append("Foreground-Service")
+        if "WAKE_LOCK" in p:
+            score += 1; reason.append("WakeLock")
+        if "READ_PHONE_STATE" in p:
+            score += 2; reason.append("Telefon-ID")
+        if "BACKGROUND_SYNC" in p:
+            score += 1; reason.append("Hintergrund-Sync")
+        return score, ", ".join(reason) if reason else "Standard"
+
+    # Sortieren nach Risiko
+    scored = [(a, _risk(a["perms"])) for a in apps]
+    scored.sort(key=lambda x: x[1][0], reverse=True)
+
+    print(f"\n  {ui.BOLD}{'App':<45} {'Risiko':>7}  {'Gründe'}{ui.RESET}")
+    print(f"  {'─'*90}")
+
+    for app, (score, reason) in scored[:50]:
+        col = (ui.BRED if score >= 6 else
+               ui.BYELLOW if score >= 4 else
+               ui.BGREEN)
+        bar = "█" * min(score, 8)
+        print(f"  {col}{app['pkg']:<45}{ui.RESET} {col}{bar:<8}{ui.RESET} {reason}")
+
+    print(f"\n  {ui.BOLD}Gesamt: {len(apps)} Apps mit INTERNET-Permission{ui.RESET}")
+    high_risk = sum(1 for _, (s, _) in scored if s >= 6)
+    print(f"  Hohes Risiko: {ui.BRED}{high_risk}{ui.RESET}  |  "
+          f"Mittleres Risiko: {ui.BYELLOW}{sum(1 for _,(s,_) in scored if 4<=s<6)}{ui.RESET}  |  "
+          f"Niedrig: {ui.BGREEN}{sum(1 for _,(s,_) in scored if s<4)}{ui.RESET}")
+
+    if ui.confirm("Liste exportieren?", True):
+        fn = os.path.join(OUT, f"internet_perm_{int(time.time())}.txt")
+        with open(fn, "w") as f:
+            f.write(f"# Internet-Permission-Scan {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+            for app, (score, reason) in scored:
+                f.write(f"  [{score:2d}] {app['pkg']:<50}  {reason}\n")
+        ui.ok(f"Gespeichert: {fn}")
+    ui.pause()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 11. PII-LEAK-DETEKTOR
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def pii_leak_detector(adb: ADB, dev=None, st=None, data=None) -> None:
+    """Erkennt persönliche Daten (IMEI, GPS, E-Mail, UUID) in DNS/HTTP-Anfragen."""
+    ui.clear()
+    ui.rule("🔍 PII-LEAK-DETEKTOR", ui.BRED)
+    print()
+    ui.info("Analysiere logcat + DNS auf Datenlecks …")
+
+    raw = adb.shell(
+        "logcat -d -t 500 2>/dev/null | grep -iE "
+        "'dns|url|http|connect|upload|send|request|getaddr' | tail -n 300")
+    raw2 = adb.shell(
+        "dumpsys activity 2>/dev/null | grep -iE 'intent.*data|uri.*tel|uri.*mailto' | head -n 50")
+
+    combined = raw + "\n" + raw2
+
+    # PII-Pattern-Suche
+    findings: list[dict] = []
+
+    _PII_PATTERNS = [
+        # (Name, Pattern, Schweregrad)
+        ("IMEI (15-stellig)", r'\b\d{15}\b', "KRITISCH"),
+        ("IMSI (15-stellig)", r'\b2\d{14}\b', "KRITISCH"),
+        ("GPS-Koordinaten", r'\b-?\d{1,3}\.\d{5,}[,&]\s*-?\d{1,3}\.\d{5,}\b', "KRITISCH"),
+        ("E-Mail-Adresse", r'\b[a-zA-Z0-9._%+\-]+%40[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}\b', "HOCH"),
+        ("E-Mail (klartext)", r'\b[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}\b', "HOCH"),
+        ("UUID/Advertiser-ID",
+         r'\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b',
+         "MITTEL"),
+        ("MAC-Adresse", r'\b(?:[0-9A-Fa-f]{2}[:\-]){5}[0-9A-Fa-f]{2}\b', "MITTEL"),
+        ("Telefonnummer", r'\b(?:\+\d{1,3}|00\d{2})[\s\-]?\d{3,14}\b', "MITTEL"),
+        ("Android-ID (16 Hex)", r'\b[0-9a-fA-F]{16}\b', "NIEDRIG"),
+        ("IP im URL", r'https?://\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}', "NIEDRIG"),
+    ]
+
+    for line in combined.splitlines():
+        for name, pat, severity in _PII_PATTERNS:
+            m = re.search(pat, line)
+            if m:
+                # App-Kontext
+                uid_m = re.search(r'uid[=:\s]+(\d+)', line, re.I)
+                pkg_m = re.search(r'(?:pkg|package)[=:\s]+([a-z][a-z0-9._]+)', line, re.I)
+                ctx = pkg_m.group(1) if pkg_m else (f"uid:{uid_m.group(1)}" if uid_m else "?")
+                findings.append({
+                    "name": name,
+                    "value": m.group(0)[:40],
+                    "severity": severity,
+                    "app": ctx[:30],
+                    "line": line.strip()[:100],
+                })
+                break  # Nur erstes Match pro Zeile
+
+    # Ausgabe nach Schweregrad
+    for sev, col in [("KRITISCH", ui.BRED), ("HOCH", ui.BYELLOW),
+                     ("MITTEL", ui.BCYAN), ("NIEDRIG", ui.GREY)]:
+        subset = [f for f in findings if f["severity"] == sev]
+        if not subset:
+            continue
+        print(f"\n  {col}{ui.BOLD}{'☠' if sev=='KRITISCH' else '⚠'} {sev} — {len(subset)} Fund{'' if len(subset)==1 else 'e'}:{ui.RESET}")
+        for f in subset[:8]:
+            print(f"    {col}{f['name']:<25}{ui.RESET}  "
+                  f"{ui.BOLD}{f['value']}{ui.RESET}  → [{f['app']}]")
+            print(f"    {ui.GREY}  Kontext: {f['line']}{ui.RESET}")
+
+    if not findings:
+        print(f"  {ui.BGREEN}✓ Keine PII-Lecks in logcat erkannt{ui.RESET}")
+        print(f"  {ui.GREY}  Hinweis: Encrypted DNS (DoH/DoT) verhindert DNS-basierte Erkennung.{ui.RESET}")
+    else:
+        crit = sum(1 for f in findings if f["severity"] == "KRITISCH")
+        print(f"\n  {ui.BOLD}Gesamt: {len(findings)} Treffer  |  {ui.BRED}{crit} KRITISCH{ui.RESET}")
+
+    if findings and ui.confirm("PII-Report speichern?", True):
+        fn = os.path.join(OUT, f"pii_leak_{int(time.time())}.txt")
+        with open(fn, "w") as f:
+            f.write(f"# PII-Leak-Bericht {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+            for entry in findings:
+                f.write(f"[{entry['severity']}] {entry['name']:<25}  "
+                        f"{entry['value']}  [{entry['app']}]\n"
+                        f"  Kontext: {entry['line']}\n\n")
+        ui.ok(f"PII-Report: {fn}")
+    ui.pause()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 12. TIEFEN-TRAFFIC-CAPTURE (Root/tcpdump)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def deep_traffic_capture(adb: ADB, dev=None, st=None, data=None) -> None:
+    """Root-tcpdump-Capture oder logcat-basiertes Tiefen-Capture."""
+    ui.clear()
+    ui.rule("📡 TIEFEN-TRAFFIC-CAPTURE", ui.BCYAN)
+    print()
+
+    # Prüfe verfügbare Tools
+    which_out = adb.shell("which tcpdump tshark strace 2>/dev/null; "
+                          "ls /system/bin/tcpdump /data/local/tmp/tcpdump 2>/dev/null")
+    has_tcpdump = "tcpdump" in which_out
+    root_test = adb.shell("id 2>/dev/null")
+    has_root = "uid=0" in root_test or "root" in root_test.lower()
+
+    print(f"  tcpdump verfügbar: {'✓' if has_tcpdump else '✗ (nicht installiert)'}")
+    print(f"  Root-Zugriff:      {'✓' if has_root else '✗ (eingeschränkter Modus)'}")
+    print()
+
+    ch = ui.menu("Capture-Methode", [
+        ("1", f"tcpdump (30s) {'[ROOT]' if not has_root else '✓'}  → PCAP exportieren"),
+        ("2", "logcat Deep-Capture (kein Root) → Alle Netz-Events 60s"),
+        ("3", "dumpsys connectivity Snapshot  → vollständiger Netz-Status"),
+        ("4", "tcpdump installieren (push binary nach /data/local/tmp/)"),
+    ], back_label="Zurück")
+    if ch == "back":
+        return
+
+    ts = int(time.time())
+    ts_str = time.strftime("%Y-%m-%d %H:%M:%S")
+
+    if ch == "1":
+        if not has_root:
+            ui.warn("Root benötigt! Versuche trotzdem …")
+        ui.info("Starte tcpdump (30 Sekunden) …")
+        cap_path = "/data/local/tmp/panzer_cap.pcap"
+        cmd = (f"su -c 'timeout 30 tcpdump -i any -w {cap_path} "
+               f"-s 0 2>/dev/null; echo DONE'" if has_root
+               else f"timeout 30 tcpdump -i any -w {cap_path} -s 0 2>/dev/null; echo DONE")
+        print(f"  {ui.GREY}Läuft 30 Sekunden … (Gerät aktiv nutzen für Traffic){ui.RESET}")
+        out = adb.shell(cmd)
+        print(f"  {ui.GREY}{out[:200]}{ui.RESET}")
+        # PCAP herunterladen
+        local_pcap = os.path.join(OUT, f"pcap_{ts}.pcap")
+        os.makedirs(OUT, exist_ok=True)
+        pull_out = adb.shell(f"ls -la {cap_path} 2>/dev/null")
+        if "pcap" in pull_out or "cap" in pull_out:
+            try:
+                import subprocess
+                result = subprocess.run(
+                    ["adb", "pull", cap_path, local_pcap],
+                    capture_output=True, text=True, timeout=30)
+                if result.returncode == 0:
+                    ui.ok(f"PCAP gespeichert: {local_pcap}")
+                    print(f"  {ui.GREY}Analysieren: tshark -r {local_pcap} -T fields -e ip.dst -e dns.qry.name{ui.RESET}")
+                else:
+                    ui.warn(f"Pull fehlgeschlagen: {result.stderr[:100]}")
+            except Exception as exc:
+                ui.warn(f"Subprocess-Fehler: {exc}")
+        else:
+            ui.warn("PCAP-Datei nicht gefunden auf Gerät.")
+
+    elif ch == "2":
+        ui.info("Starte logcat Deep-Capture (60s) …")
+        print(f"  {ui.GREY}Erfasse alle Netzwerk-Ereignisse …{ui.RESET}")
+        # logcat 60s
+        import threading
+        capture_lines: list[str] = []
+        stop_flag = [False]
+
+        def _capture_worker():
+            start = time.monotonic()
+            while not stop_flag[0] and time.monotonic() - start < 60:
+                raw = adb.shell(
+                    "logcat -d 2>/dev/null | grep -iE 'dns|http|connect|ssl|tls|"
+                    "network|traffic|socket|upload|download' | tail -n 50")
+                for line in raw.splitlines():
+                    if line not in capture_lines:
+                        capture_lines.append(line)
+                time.sleep(2)
+
+        t = threading.Thread(target=_capture_worker, daemon=True)
+        t.start()
+        for i in range(60):
+            sys.stdout.write(f"\r  Erfasse … {60-i}s verbleibend  ({len(capture_lines)} Events)  ")
+            sys.stdout.flush()
+            time.sleep(1)
+        stop_flag[0] = True
+        t.join(timeout=3)
+        print()
+
+        # Analysieren
+        domains = list(set(_parse_dns_from_logcat("\n".join(capture_lines))))
+        fn = os.path.join(OUT, f"deep_capture_{ts}.txt")
+        with open(fn, "w") as f:
+            f.write(f"# Deep-Traffic-Capture {ts_str}\n")
+            f.write(f"# Dauer: 60s  |  Events: {len(capture_lines)}  |  Domains: {len(domains)}\n\n")
+            f.write("── ERKANNTE DOMAINS ──────────────────\n")
+            for d in sorted(domains):
+                flag = " [TRACKER]" if _is_tracker(d) else ""
+                flag += " [MALWARE]" if _is_malware(d) else ""
+                cat, _ = _cat_domain(d)
+                f.write(f"  {d:<50}  [{cat}]{flag}\n")
+            f.write("\n── RAW EVENTS ────────────────────────\n")
+            f.write("\n".join(capture_lines))
+        ui.ok(f"Capture gespeichert: {fn} ({len(capture_lines)} Events, {len(domains)} Domains)")
+
+    elif ch == "3":
+        ui.info("Erstelle vollständigen Netz-Status-Snapshot …")
+        snap_cmds = [
+            ("Verbindungen", "ss -tnp 2>/dev/null || netstat -tnp 2>/dev/null"),
+            ("Routing-Tabelle", "ip route 2>/dev/null || netstat -rn 2>/dev/null"),
+            ("Netzwerk-Interfaces", "ip addr 2>/dev/null || ifconfig 2>/dev/null"),
+            ("DNS-Props", "getprop | grep -iE 'dns|resolv' 2>/dev/null"),
+            ("Connectivity dumpsys", "dumpsys connectivity 2>/dev/null | head -n 80"),
+            ("WiFi-Status", "dumpsys wifi 2>/dev/null | head -n 60"),
+            ("VPN-Status", "dumpsys vpn 2>/dev/null | head -n 30"),
+            ("/proc/net/tcp6", "cat /proc/net/tcp6 2>/dev/null | head -n 30"),
+        ]
+        fn = os.path.join(OUT, f"net_snapshot_{ts}.txt")
+        with open(fn, "w") as f:
+            f.write(f"# Netz-Snapshot {ts_str}\n\n")
+            for label, cmd in snap_cmds:
+                out = adb.shell(cmd).strip()
+                f.write(f"## {label}\n{out}\n\n")
+                if out:
+                    ui.kv(label, out[:80] + ("…" if len(out) > 80 else ""))
+        ui.ok(f"Snapshot: {fn}")
+
+    elif ch == "4":
+        ui.rule("tcpdump installieren", ui.BCYAN)
+        print(f"\n  {ui.GREY}Methode 1: Via Magisk / Android-Paketmanager")
+        print(f"  Methode 2: Statisches Binary von https://github.com/extremecoders-re/tcpdump-android")
+        print(f"\n  Manuell installieren:")
+        print(f"    adb push tcpdump /data/local/tmp/tcpdump")
+        print(f"    adb shell chmod +x /data/local/tmp/tcpdump{ui.RESET}")
+
+    ui.pause()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 13. FORENSIK-KOMPLETT-BERICHT
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def full_forensics_report(adb: ADB, dev=None, st=None, data=None) -> None:
+    """Erstellt vollständigen Netzwerk-Forensik-Bericht ohne Interaktion."""
+    ui.clear()
+    ui.rule("🗂️  FORENSIK-KOMPLETT-BERICHT", ui.BCYAN)
+    ts  = int(time.time())
+    ts_str = time.strftime("%Y-%m-%d %H:%M:%S")
+    print()
+    ui.info(f"Starte vollständige Forensik-Analyse  [{ts_str}] …")
+    print()
+
+    results: dict = {
+        "timestamp": ts_str,
+        "domains": [],
+        "trackers": [],
+        "malware_domains": [],
+        "connections": [],
+        "dns_servers": [],
+        "tls_issues": [],
+        "pii_findings": [],
+        "apps_internet": 0,
+        "high_risk_apps": [],
+    }
+
+    # 1. Domains
+    ui.info("[1/8] DNS-Domains sammeln …")
+    raw_dns = adb.shell(
+        "logcat -d -t 500 2>/dev/null | grep -iE 'dns|getaddrinfo|resolv' | tail -n 200")
+    all_domains = list(set(_parse_dns_from_logcat(raw_dns)))
+    results["domains"] = sorted(all_domains)
+    results["trackers"] = [d for d in all_domains if _is_tracker(d)]
+    results["malware_domains"] = [d for d in all_domains if _is_malware(d)]
+    print(f"    → {len(all_domains)} Domains  |  {len(results['trackers'])} Tracker  |  "
+          f"{len(results['malware_domains'])} Malware")
+
+    # 2. Verbindungen
+    ui.info("[2/8] Verbindungen …")
+    conn_raw = adb.shell("ss -tnp 2>/dev/null | grep ESTAB | head -n 20")
+    conns = []
+    for line in conn_raw.splitlines():
+        parts = line.split()
+        if len(parts) >= 5:
+            remote = parts[4]
+            proc = parts[-1] if '(' in parts[-1] else ""
+            proc = re.sub(r'.*"([^"]+)".*', r'\1', proc)
+            org, country = _lookup_ip_org(remote.split(':')[0])
+            conns.append({"remote": remote, "app": proc, "org": org, "country": country})
+    results["connections"] = conns
+    print(f"    → {len(conns)} aktive Verbindungen")
+
+    # 3. DNS-Server
+    ui.info("[3/8] DNS-Server …")
+    for prop in ["net.dns1", "net.dns2", "dhcp.wlan0.dns1", "dhcp.rmnet0.dns1"]:
+        v = adb.shell(f"getprop {prop} 2>/dev/null").strip()
+        if v and re.match(r'\d+\.', v):
+            results["dns_servers"].append(v)
+    print(f"    → DNS-Server: {', '.join(set(results['dns_servers'])) or '—'}")
+
+    # 4. TLS-Issues
+    ui.info("[4/8] TLS-Analyse …")
+    tls_raw = adb.shell(
+        "logcat -d -t 200 2>/dev/null | grep -iE 'ssl|tls|cert|handshake|x509' | tail -n 100")
+    for v in ["TLSv1.0", "TLSv1.1", "SSLv3"]:
+        if v in tls_raw:
+            results["tls_issues"].append(f"Veraltete TLS-Version: {v}")
+    if "CertificateException" in tls_raw or "SSLHandshakeException" in tls_raw:
+        results["tls_issues"].append("Zertifikat-Fehler erkannt")
+    print(f"    → {len(results['tls_issues'])} TLS-Probleme")
+
+    # 5. PII
+    ui.info("[5/8] PII-Scan …")
+    pii_raw = adb.shell(
+        "logcat -d -t 300 2>/dev/null | grep -iE 'dns|url|http|upload|send' | tail -n 200")
+    pii_pats = [
+        ("IMEI", r'\b\d{15}\b'),
+        ("GPS", r'\b-?\d{1,3}\.\d{5,}[,&]-?\d{1,3}\.\d{5,}'),
+        ("E-Mail", r'\b[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}\b'),
+        ("UUID", r'\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b'),
+    ]
+    for name, pat in pii_pats:
+        m = re.search(pat, pii_raw)
+        if m:
+            results["pii_findings"].append(f"{name}: {m.group(0)[:30]}")
+    print(f"    → {len(results['pii_findings'])} PII-Treffer")
+
+    # 6. Internet-Apps (schnell)
+    ui.info("[6/8] Internet-Permission-Apps …")
+    internet_raw = adb.shell(
+        "dumpsys package 2>/dev/null | grep -c 'android.permission.INTERNET'")
+    try:
+        results["apps_internet"] = int(internet_raw.strip().splitlines()[0])
+    except Exception:
+        results["apps_internet"] = 0
+    print(f"    → {results['apps_internet']} Apps mit INTERNET-Permission")
+
+    # 7. Risiko-Apps
+    ui.info("[7/8] Risiko-Apps …")
+    risk_raw = adb.shell(
+        "dumpsys package 2>/dev/null | grep -B 5 'RECEIVE_BOOT_COMPLETED' | grep 'Package \\['")
+    for m in re.finditer(r'Package \[([^\]]+)\]', risk_raw):
+        results["high_risk_apps"].append(m.group(1))
+    print(f"    → {len(results['high_risk_apps'])} Apps mit Auto-Start + Netz")
+
+    # 8. Bericht schreiben
+    ui.info("[8/8] Bericht schreiben …")
+    fn_txt  = os.path.join(OUT, f"forensik_report_{ts}.txt")
+    fn_json = os.path.join(OUT, f"forensik_report_{ts}.json")
+
+    risk_score = (
+        len(results["malware_domains"]) * 10 +
+        len(results["trackers"]) * 2 +
+        len(results["pii_findings"]) * 5 +
+        len(results["tls_issues"]) * 3
+    )
+    risk_label = ("KRITISCH" if risk_score >= 30 else
+                  "HOCH" if risk_score >= 15 else
+                  "MITTEL" if risk_score >= 5 else "NIEDRIG")
+
+    with open(fn_txt, "w") as f:
+        f.write("=" * 72 + "\n")
+        f.write("  AndroidPanzer – Netzwerk-Forensik-Bericht\n")
+        f.write(f"  Erstellt: {ts_str}\n")
+        f.write(f"  Risiko-Score: {risk_score}  ({risk_label})\n")
+        f.write("=" * 72 + "\n\n")
+        f.write("── EXECUTIVE SUMMARY ──────────────────────────────────────────────\n\n")
+        f.write(f"  Domains gesamt:       {len(all_domains)}\n")
+        f.write(f"  Tracker-Domains:      {len(results['trackers'])}\n")
+        f.write(f"  Malware-Domains:      {len(results['malware_domains'])}\n")
+        f.write(f"  Aktive Verbindungen:  {len(conns)}\n")
+        f.write(f"  PII-Lecks:            {len(results['pii_findings'])}\n")
+        f.write(f"  TLS-Probleme:         {len(results['tls_issues'])}\n")
+        f.write(f"  Internet-Apps:        {results['apps_internet']}\n\n")
+        if results["malware_domains"]:
+            f.write("── MALWARE-DOMAINS (KRITISCH) ──────────────────────────────────────\n")
+            for d in results["malware_domains"]:
+                f.write(f"  ☠ {d}\n")
+            f.write("\n")
+        f.write("── TRACKER-DOMAINS ─────────────────────────────────────────────────\n")
+        for d in results["trackers"]:
+            cat, _ = _cat_domain(d)
+            f.write(f"  T {d:<50}  [{cat}]\n")
+        f.write("\n── ALLE DOMAINS ────────────────────────────────────────────────────\n")
+        for d in sorted(all_domains):
+            cat, _ = _cat_domain(d)
+            flag = " [TRACKER]" if _is_tracker(d) else ""
+            flag += " [MALWARE]" if _is_malware(d) else ""
+            f.write(f"  {d:<50}  [{cat}]{flag}\n")
+        f.write("\n── VERBINDUNGEN ────────────────────────────────────────────────────\n")
+        for c in conns:
+            f.write(f"  {c['remote']:<25}  {c['org']:<22}  {c['country']}  [{c['app']}]\n")
+        f.write("\n── PII-BEFUNDE ─────────────────────────────────────────────────────\n")
+        for p in results["pii_findings"]:
+            f.write(f"  {p}\n")
+        f.write("\n── TLS-PROBLEME ────────────────────────────────────────────────────\n")
+        for t in results["tls_issues"]:
+            f.write(f"  {t}\n")
+        f.write("\n── EMPFEHLUNGEN ────────────────────────────────────────────────────\n")
+        if results["malware_domains"]:
+            f.write("  ⚠ SOFORT: Malware-Domains blockieren (Option 7 → Malware blockieren)\n")
+        if results["trackers"]:
+            f.write("  → Tracker blockieren via DNS (Quad9/AdGuard) oder hosts-File\n")
+        if results["pii_findings"]:
+            f.write("  → PII-Lecks prüfen: Betroffene Apps deinstallieren oder einschränken\n")
+        if results["tls_issues"]:
+            f.write("  → Apps mit TLS 1.0/1.1 aktualisieren\n")
+        f.write("  → Internet-Permission auf Minimum reduzieren (Option 10)\n")
+        f.write("  → DoT/DoH aktivieren: AdGuard DNS (Option 7 → DNS setzen)\n")
+        f.write("\n" + "=" * 72 + "\n")
+
+    with open(fn_json, "w") as f:
+        json.dump(results, f, indent=2)
+
+    # Ergebnis anzeigen
+    print()
+    col = (ui.BRED if risk_label == "KRITISCH" else
+           ui.BYELLOW if risk_label in ("HOCH", "MITTEL") else
+           ui.BGREEN)
+    print(f"  {col}{ui.BOLD}RISIKO-SCORE: {risk_score} ({risk_label}){ui.RESET}\n")
+    print(f"  {ui.BGREEN}✓ Bericht: {fn_txt}{ui.RESET}")
+    print(f"  {ui.BGREEN}✓ JSON:    {fn_json}{ui.RESET}")
+    if results["malware_domains"]:
+        for _ in range(3):
+            sys.stdout.write(f"\r  {ui.BRED}{ui.BOLD}  ☠ MALWARE-DOMAINS AKTIV — SOFORT HANDELN!  {ui.RESET}")
+            sys.stdout.flush()
+            time.sleep(0.25)
+            sys.stdout.write(f"\r{' '*60}")
+            sys.stdout.flush()
+            time.sleep(0.12)
+        print()
+    ui.pause()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  HAUPTMENÜ (14 Optionen)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def menu(adb: ADB, dev=None, st=None, data=None) -> None:
-    """App-Domain Monitor – Hauptmenü."""
+    """App-Domain Monitor – Hauptmenü (14 Optionen)."""
     while True:
         ui.clear()
-        ui.banner(subtitle="🌐 APP-DOMAIN MONITOR – Echtzeit · Statistik · Blacklist · DNS")
-        print(f"  {ui.GREY}Zeigt welche Apps welche Domains aufrufen · Tracker-Erkennung · DNS-Analyse{ui.RESET}\n")
-        ch = ui.menu("Aktion", [
-            ("1", f"{ui.BRED}{ui.BOLD}🔴 LIVE DNS/Domain Monitor{ui.RESET}  "
-                  f"(Echtzeit · Apps · Domains · Frequenz · Herzschlag-Alarm)"),
-            ("2", "📊 App-Netzwerk-Statistik  (Traffic pro App · UID · Bytes/Pakete · sortierbar)"),
-            ("3", "🚫 Blacklist-Check         (200+ Tracker · Malware-Domains · Sofort-Alarm)"),
-            ("4", "🗂️  DNS-Cache Dump         (Resolver · Server · Props · /proc/net · Root)"),
-            ("5", "📁 Alles speichern         (Vollexport: JSON + TXT + netstats + DNS)"),
+        ui.banner(subtitle="🌐 APP-DOMAIN MONITOR – Vollständige Netzwerk-Forensik")
+        print(f"  {ui.GREY}Echtzeit-DNS · App-Traffic · Tracker · Geolokalisierung · PII · Forensik{ui.RESET}\n")
+        ch = ui.menu("Aktion (1-14)", [
+            ("1",  f"{ui.BRED}{ui.BOLD}🔴 LIVE DNS/Domain Monitor{ui.RESET}  "
+                   f"(Echtzeit · Apps · Domains · Heartbeat-Alarm)"),
+            ("2",  "📊 App-Netzwerk-Statistik      (Traffic/Bytes/Pakete pro App · sortierbar)"),
+            ("3",  "🚫 Blacklist-Check             (200+ Tracker/Malware · Sofort-Alarm)"),
+            ("4",  "🗂️  DNS-Cache Dump             (Server · Props · /proc/net · Root)"),
+            ("5",  "📱 Pro-App Domain-Profil       (alle Domains+Subdomains je App)"),
+            ("6",  "📅 Domain-Timeline             (Zeitverlauf · Filter · CSV-Export)"),
+            ("7",  "🔒 Domain-Blocker              (/etc/hosts · NetworkPolicy · DNS-Empfehlung)"),
+            ("8",  "🌍 IP-Geolokalisierung         (Reverse-DNS · Org · Land · Verbindungen)"),
+            ("9",  "🔐 TLS/SSL Inspector           (Versionen · Zertifikat-Fehler · MITM-Risiko)"),
+            ("10", "🌐 Internet-Permission-Scan    (welche Apps dürfen ins Netz · Risiko-Score)"),
+            ("11", "🔍 PII-Leak-Detektor           (IMEI · GPS · E-Mail · UUID in DNS/HTTP)"),
+            ("12", "📡 Tiefen-Traffic-Capture      (tcpdump/PCAP · logcat 60s · Netz-Snapshot)"),
+            ("13", f"{ui.BCYAN}{ui.BOLD}🗂️  Forensik-Komplett-Bericht  (alle Checks · Risiko-Score · Export){ui.RESET}"),
+            ("14", "📁 Alles speichern             (Vollexport JSON+TXT+netstats+DNS)"),
         ], back_label="Hauptmenü")
         if ch in ("back", "quit"):
             return
         try:
             dispatch = {
-                "1": live_domain_monitor,
-                "2": app_network_history,
-                "3": domain_blacklist_check,
-                "4": dns_cache_dump,
-                "5": export_all,
+                "1":  live_domain_monitor,
+                "2":  app_network_history,
+                "3":  domain_blacklist_check,
+                "4":  dns_cache_dump,
+                "5":  per_app_domain_profile,
+                "6":  domain_timeline,
+                "7":  domain_blocker,
+                "8":  ip_geolocate,
+                "9":  tls_inspector,
+                "10": internet_permission_scan,
+                "11": pii_leak_detector,
+                "12": deep_traffic_capture,
+                "13": full_forensics_report,
+                "14": export_all,
             }
             fn = dispatch.get(ch)
             if fn:

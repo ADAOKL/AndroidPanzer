@@ -131,18 +131,21 @@ def menu(adb: ADB, dev, st, data: dict) -> None:
         ui.clear()
         ui.banner(subtitle="📁 Fall-Datenbank & Beweissicherung")
         cases = [f for f in os.listdir(DB_DIR) if f.endswith(".db")]
-        ui.kv("Vorhandene Fälle", ", ".join(cases) or "—")
+        ui.kv("Vorhandene Fälle", f"{len(cases)} Fall/Fälle" if cases else "—")
         ch = ui.menu("Aktionen", [
             ("1", "Neuen Fall anlegen"),
             ("2", "Geräte-Artefakte in einen Fall importieren (read-only)"),
             ("3", "Beweisdatei (Pull/Image) registrieren + hashen"),
             ("4", "Integrität & Chain-of-Custody prüfen"),
             ("5", "Fall-Report exportieren (HTML)"),
+            ("6", "Artefakte durchsuchen & filtern"),
+            ("7", "Fall-Übersicht & Statistik"),
         ], back_label="Hauptmenü")
         if ch in ("back", "quit"):
             return
         {"1": _new_case, "2": _ingest, "3": _register_file,
-         "4": _verify, "5": _report}.get(ch, lambda *a: None)(adb, dev, st, data)
+         "4": _verify, "5": _report,
+         "6": _search, "7": _stats}.get(ch, lambda *a: None)(adb, dev, st, data)
 
 
 def _pick_case() -> str | None:
@@ -287,6 +290,81 @@ def _verify(adb, dev, st, data) -> None:
         prev = eh
     ui.kv("Chain-of-Custody", f"{ui.BGREEN}unverändert ✓{ui.RESET}" if chain_ok
           else f"{ui.BRED}MANIPULIERT ✗{ui.RESET}")
+    con.close()
+    ui.pause()
+
+
+def _search(adb, dev, st, data) -> None:
+    """Artefakte in einem Fall durchsuchen."""
+    ui.clear(); ui.rule("🔍 ARTEFAKTE DURCHSUCHEN", ui.CYAN)
+    path = _pick_case()
+    if not path:
+        return
+    con = _connect(path)
+    term = ui.ask("Suchbegriff (Inhalt / Nummer / App-Name)").strip()
+    if not term:
+        con.close(); return
+    cat_filter = ui.ask("Kategorie-Filter (Anruf/SMS/App/Konto/Medien oder leer = alle)").strip()
+    query = "SELECT category,artifact_type,event_time,content,sha256 FROM artifacts WHERE content LIKE ?"
+    params = [f"%{term}%"]
+    if cat_filter:
+        query += " AND category LIKE ?"
+        params.append(f"%{cat_filter}%")
+    query += " ORDER BY event_time DESC LIMIT 100"
+    rows = con.execute(query, params).fetchall()
+    con.close()
+    print(f"\n  {ui.BOLD}{len(rows)} Treffer für '{term}'{ui.RESET}\n")
+    if not rows:
+        ui.info("Keine Artefakte gefunden.")
+    for cat, atype, ts, content, sha in rows[:50]:
+        print(f"  {ui.BCYAN}[{cat}/{atype}]{ui.RESET} {ui.GREY}{ts:19s}{ui.RESET}  {content[:80]}")
+        print(f"    {ui.GREY}SHA256: {sha[:32]}…{ui.RESET}")
+    if len(rows) > 50:
+        ui.info(f"… {len(rows)-50} weitere Treffer nicht angezeigt.")
+    ui.pause()
+
+
+def _stats(adb, dev, st, data) -> None:
+    """Fall-Übersicht und Statistik."""
+    ui.clear(); ui.rule("📊 FALL-ÜBERSICHT & STATISTIK", ui.CYAN)
+    path = _pick_case()
+    if not path:
+        return
+    con = _connect(path)
+    ci = con.execute("SELECT name,examiner,device_serial,device_model,created_at,notes FROM case_info LIMIT 1").fetchone()
+    if ci:
+        print(f"\n  {ui.BOLD}Fall:    {ci[0]}{ui.RESET}")
+        print(f"  Bearbeiter: {ci[1]}")
+        print(f"  Gerät:      {ci[3]} ({ci[2]})")
+        print(f"  Angelegt:   {ci[4]}")
+        if ci[5]:
+            print(f"  Notiz:      {ci[5]}")
+    print()
+    # Artefakt-Statistik nach Kategorie
+    ui.rule("Artefakte", ui.GREY)
+    total = con.execute("SELECT count(*) FROM artifacts").fetchone()[0]
+    cats = con.execute("SELECT category, count(*) FROM artifacts GROUP BY category ORDER BY count(*) DESC").fetchall()
+    ui.kv("Gesamt-Artefakte", str(total))
+    for cat, cnt in cats:
+        ui.kv(f"  {cat}", str(cnt))
+    # Zeitraum
+    oldest = con.execute("SELECT min(event_time) FROM artifacts WHERE event_time != ''").fetchone()[0]
+    newest = con.execute("SELECT max(event_time) FROM artifacts WHERE event_time != ''").fetchone()[0]
+    if oldest:
+        print()
+        ui.kv("Ältestes Ereignis", oldest or "?")
+        ui.kv("Neuestes Ereignis", newest or "?")
+    # Beweisdateien
+    nfiles = con.execute("SELECT count(*) FROM evidence_files").fetchone()[0]
+    sz = con.execute("SELECT sum(size) FROM evidence_files").fetchone()[0] or 0
+    print()
+    ui.kv("Beweisdateien", f"{nfiles} Dateien / {sz//1024//1024:.1f} MB total")
+    # Chain-of-Custody Einträge
+    ncoc = con.execute("SELECT count(*) FROM chain_of_custody").fetchone()[0]
+    last_coc = con.execute("SELECT ts,action FROM chain_of_custody ORDER BY id DESC LIMIT 1").fetchone()
+    ui.kv("Chain-of-Custody", f"{ncoc} Einträge")
+    if last_coc:
+        ui.kv("Letzter Eintrag", f"{last_coc[0]} – {last_coc[1]}")
     con.close()
     ui.pause()
 

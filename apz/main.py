@@ -432,6 +432,10 @@ def _numeric_main_menu(adb: ADB, dev: Device, st: dict, data: dict) -> None:
             elif choice_lower == "56":
                 _bar("🌐 APP-DOMAIN MONITOR", _s("56"))
                 app_traffic_monitor.menu(adb, dev, st, data)
+            elif choice_lower == "57":
+                _bar("🕵️  PLAY STORE FORENSICS", _s("57"))
+                from playstore_forensics.main import menu as psf_menu
+                psf_menu(adb, dev, st)
             else:
                 ui.warn("Ungültige Option!")
                 time.sleep(0.5)

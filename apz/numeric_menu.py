@@ -88,6 +88,9 @@ class NumericMainMenu:
 
         # TIER 11: APP-DOMAIN MONITOR
         (56, "🌐 APP-DOMAIN MONITOR", "Echtzeit DNS · Tracker · Blacklist · App-Traffic", "appdomains"),
+
+        # TIER 12: PLAY STORE FORENSICS
+        (57, "🕵️  PLAY STORE FORENSICS", "Install-Historie · Suchverlauf · APK-Scan · Timeline", "psforensics"),
     ]
 
     def __init__(self, adb=None):
@@ -174,7 +177,14 @@ class NumericMainMenu:
         # Gruppe 11: App-Domain Monitor
         print(f"{ui.BGREEN}{'TIER 11: APP-DOMAIN MONITOR':^80}{ui.RESET}")
         print()
-        for num, icon, desc, key in self.MENU_ITEMS[55:]:
+        for num, icon, desc, key in self.MENU_ITEMS[55:56]:
+            print(f"  {ui.BOLD}{num:2d}{ui.RESET}  {icon:30}  {desc}")
+        print()
+
+        # Gruppe 12: Play Store Forensics
+        print(f"{ui.BGREEN}{'TIER 12: PLAY STORE FORENSICS':^80}{ui.RESET}")
+        print()
+        for num, icon, desc, key in self.MENU_ITEMS[56:]:
             print(f"  {ui.BOLD}{num:2d}{ui.RESET}  {icon:30}  {desc}")
         print()
 
@@ -184,7 +194,7 @@ class NumericMainMenu:
         print("   Q  Beenden")
         print()
 
-        choice = input(f"  {ui.BOLD}☠ ❯ Auswahl (0-56, Q): {ui.RESET}").strip().upper()
+        choice = input(f"  {ui.BOLD}☠ ❯ Auswahl (0-57, Q): {ui.RESET}").strip().upper()
         return choice
 
     def get_handler(self, choice: str) -> str:

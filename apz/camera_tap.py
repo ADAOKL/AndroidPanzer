@@ -2,6 +2,7 @@
 
 Heimliche Video-Erfassung mit realtime Stream & Recording.
 GESCHÜTZT: Password-Authentifizierung erforderlich!
+LIVE-ZUGRIFF: OpenCV für echte Kamera-Erfassung!
 """
 from __future__ import annotations
 
@@ -9,6 +10,8 @@ import os
 import time
 import json
 import hashlib
+import subprocess
+import threading
 from typing import Optional, List, Dict, Tuple
 from dataclasses import dataclass
 from datetime import datetime
@@ -17,6 +20,19 @@ from getpass import getpass
 
 from . import ui
 from .adb import ADB
+
+# Optional: OpenCV für echte Kamera
+try:
+    import cv2
+    HAS_OPENCV = True
+except ImportError:
+    HAS_OPENCV = False
+
+try:
+    import numpy as np
+    HAS_NUMPY = True
+except ImportError:
+    HAS_NUMPY = False
 
 
 class VideoFormat(Enum):
@@ -63,6 +79,81 @@ class AuditLog:
     def get_entries(self) -> List[Dict]:
         """Hole alle Audit-Einträge."""
         return self.entries
+
+
+class LiveCameraCapture:
+    """LIVE KAMERA-ERFASSUNG mit OpenCV."""
+
+    def __init__(self, camera_index: int = 0):
+        self.camera_index = camera_index
+        self.cap = None
+        self.is_recording = False
+        self.frame_count = 0
+        self.fps = 30
+        self.resolution = (1920, 1080)
+        self.frames_buffer = []
+
+    def initialize_camera(self) -> bool:
+        """Initialisiere die Kamera."""
+        if not HAS_OPENCV:
+            return False
+
+        try:
+            self.cap = cv2.VideoCapture(self.camera_index)
+            if not self.cap.isOpened():
+                return False
+
+            # Setze Auflösung
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.resolution[0])
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.resolution[1])
+            self.cap.set(cv2.CAP_PROP_FPS, self.fps)
+
+            return True
+        except Exception as e:
+            return False
+
+    def capture_frame(self) -> Optional[tuple]:
+        """Capture einen Frame."""
+        if not self.cap:
+            return None
+
+        try:
+            ret, frame = self.cap.read()
+            if ret:
+                self.frame_count += 1
+                return (ret, frame)
+            return None
+        except Exception:
+            return None
+
+    def get_frame_info(self) -> Dict:
+        """Hole Frame-Informationen."""
+        if not self.cap:
+            return {}
+
+        return {
+            "frame_count": self.frame_count,
+            "fps": self.cap.get(cv2.CAP_PROP_FPS) if HAS_OPENCV else 0,
+            "width": int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH)) if HAS_OPENCV else 0,
+            "height": int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) if HAS_OPENCV else 0,
+        }
+
+    def save_frame(self, frame, filename: str) -> bool:
+        """Speichere einen Frame."""
+        if not HAS_OPENCV or frame is None:
+            return False
+
+        try:
+            cv2.imwrite(filename, frame)
+            return True
+        except Exception:
+            return False
+
+    def release(self) -> None:
+        """Gib die Kamera frei."""
+        if self.cap:
+            self.cap.release()
+            self.cap = None
 
 
 class PasswordProtection:
@@ -218,6 +309,7 @@ class CameraTap:
         self.is_streaming = False
         self.audit_log = AuditLog()
         self.password_protection = PasswordProtection(self.audit_log)
+        self.live_camera = LiveCameraCapture(0)  # Kamera-Index 0 (Haupt-Kamera)
 
     def show_camera_menu(self) -> None:
         """Zeigt Kamera-TAP Menü."""
@@ -328,7 +420,7 @@ class CameraTap:
         ui.pause()
 
     def start_live_stream(self) -> None:
-        """Startet Live-Video-Stream."""
+        """Startet Live-Video-Stream MIT ECHTEM KAMERA-ZUGRIFF."""
         ui.clear()
         ui.rule("⚠️  LIVE-VIDEO-STREAM", ui.BRED)
         print()
@@ -336,13 +428,26 @@ class CameraTap:
         print("  Der Video-Stream wird auf diesem Computer angezeigt.")
         print()
 
+        # Check ob OpenCV verfügbar ist
+        if not HAS_OPENCV:
+            ui.warn("⚠️  OpenCV nicht verfügbar - Starte Simulator-Modus")
+            self._start_simulated_stream()
+            return
+
         if not ui.confirm("Wirklich starten?", False):
             self.audit_log.log_event("LIVE_STREAM", "User cancelled", False)
             return
 
-        print("\n  Verbinde mit Kamera-Stream...")
+        print("\n  Initialisiere Kamera...")
 
         try:
+            # Initialisiere echte Kamera
+            if not self.live_camera.initialize_camera():
+                ui.err("❌ Kamera konnte nicht initialisiert werden")
+                self.audit_log.log_event("LIVE_STREAM", "Camera init failed", False)
+                ui.pause()
+                return
+
             self.is_streaming = True
             session = VideoSession(
                 session_id=f"stream_{int(time.time())}",
@@ -351,22 +456,106 @@ class CameraTap:
                 stream_active=True,
             )
 
-            self.audit_log.log_event("LIVE_STREAM_START", f"Stream started: {session.session_id}", True)
+            self.audit_log.log_event("LIVE_STREAM_START", f"Stream started: {session.session_id} (LIVE CAMERA)", True)
 
-            ui.rule("🔴 LIVE-VIDEO-STREAM AKTIV", ui.BRED)
+            ui.rule("🔴 LIVE-VIDEO-STREAM AKTIV (ECHTE KAMERA)", ui.BRED)
             print()
-            print(f"  Kamera-Auflösung: {self.config.resolution}")
-            print(f"  FPS: {self.config.fps}")
+            frame_info = self.live_camera.get_frame_info()
+            print(f"  Kamera-Auflösung: {frame_info.get('width', 'N/A')}x{frame_info.get('height', 'N/A')}")
+            print(f"  FPS: {frame_info.get('fps', 'N/A')}")
             print("  [Strg+C zum Stoppen]")
             print()
 
-            # Streaming-Schleife
+            # ECHTE Streaming-Schleife mit OpenCV
+            frames_captured = 0
+            frame_start_time = time.time()
+
+            try:
+                while self.is_streaming:
+                    # Capture Frame von echter Kamera
+                    frame_data = self.live_camera.capture_frame()
+                    if frame_data is None:
+                        ui.warn("Frame-Capture fehlgeschlagen")
+                        break
+
+                    ret, frame = frame_data
+                    if ret:
+                        frames_captured += 1
+
+                        # Zeige Frame-Info
+                        if frames_captured % 30 == 0:  # Jede Sekunde
+                            elapsed = time.time() - frame_start_time
+                            actual_fps = frames_captured / elapsed if elapsed > 0 else 0
+                            ui.progress(
+                                frames_captured,
+                                300,
+                                f"Stream aktiv... ({frames_captured} frames, {actual_fps:.1f} fps)"
+                            )
+
+                        # Zeitkontrolle
+                        if frames_captured >= 300:  # ~10 Sekunden
+                            break
+
+                        time.sleep(0.01)  # Minimale Verzögerung
+                    else:
+                        ui.warn("Frame-Read fehlgeschlagen")
+                        break
+
+            except KeyboardInterrupt:
+                ui.warn("Stream unterbrochen")
+
+            # Cleanup
+            self.is_streaming = False
+            self.live_camera.release()
+
+            session.status = "stopped"
+            session.frames_captured = frames_captured
+            session.duration_ms = int((time.time() - session.start_time) * 1000)
+            self.session_history.append(session)
+
+            self.audit_log.log_event(
+                "LIVE_STREAM_STOP",
+                f"Stream stopped: {frames_captured} frames, {session.duration_ms}ms (LIVE CAMERA)",
+                True
+            )
+
+            ui.ok(f"Stream beendet: {frames_captured} Frames erfasst")
+            ui.pause()
+
+        except Exception as e:
+            ui.err(f"Stream-Fehler: {e}")
+            self.audit_log.log_event("LIVE_STREAM_ERROR", str(e)[:100], False)
+            self.live_camera.release()
+            ui.pause()
+
+    def _start_simulated_stream(self) -> None:
+        """Fallback: Simulierter Stream ohne OpenCV."""
+        if not ui.confirm("Wirklich starten (Simulator)?", False):
+            return
+
+        print("\n  Starte Simulator-Modus...")
+
+        try:
+            self.is_streaming = True
+            session = VideoSession(
+                session_id=f"stream_sim_{int(time.time())}",
+                start_time=time.time(),
+                status="streaming",
+                stream_active=True,
+            )
+
+            ui.rule("🟡 SIMULATOR-STREAM (Kein OpenCV)", ui.BYELLOW)
+            print()
+            print("  Simulator läuft...")
+            print("  [Strg+C zum Stoppen]")
+            print()
+
             frames = 0
             try:
-                for i in range(300):  # 10 Sekunden bei 30 FPS
-                    ui.progress(i, 300, f"Stream aktiv... ({frames} frames)")
+                for i in range(300):
+                    ui.progress(i, 300, f"Sim-Stream... ({frames} frames)")
                     frames += 1
-                    time.sleep(0.033)  # 30 FPS
+                    time.sleep(0.033)
             except KeyboardInterrupt:
                 pass
 
@@ -376,13 +565,13 @@ class CameraTap:
             session.duration_ms = int((time.time() - session.start_time) * 1000)
             self.session_history.append(session)
 
-            self.audit_log.log_event("LIVE_STREAM_STOP", f"Stream stopped: {frames} frames, {session.duration_ms}ms", True)
+            self.audit_log.log_event("LIVE_STREAM_STOP", f"Simulator stream: {frames} frames", True)
 
-            ui.ok("Stream beendet")
+            ui.ok("Simulator-Stream beendet")
             ui.pause()
 
         except Exception as e:
-            ui.err(f"Stream-Fehler: {e}")
+            ui.err(f"Simulator-Fehler: {e}")
             ui.pause()
 
     def start_video_recording(self) -> None:

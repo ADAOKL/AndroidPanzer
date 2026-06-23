@@ -623,3 +623,8 @@ class ReportGenerator:
                         else:
                             print(f"    {key}: {value}")
                 print()
+
+def menu(adb=None) -> None:
+    """ReportGenerator Menu Wrapper."""
+    obj = ReportGenerator(adb) if adb else ReportGenerator()
+    obj.show_report_menu()

@@ -81,3 +81,8 @@ class SettingsManager:
 def create_settings_manager() -> SettingsManager:
     """Factory: Erstellt SettingsManager."""
     return SettingsManager()
+
+def menu(adb=None) -> None:
+    """SettingsManager Menu Wrapper."""
+    obj = SettingsManager(adb) if adb else SettingsManager()
+    obj.show_settings()

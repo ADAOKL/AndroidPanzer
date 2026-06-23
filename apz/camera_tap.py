@@ -943,3 +943,8 @@ class CameraTap:
 def create_camera_tap(adb: ADB) -> CameraTap:
     """Erstellt neuen Camera Tap Controller."""
     return CameraTap(adb)
+
+def menu(adb=None) -> None:
+    """CameraTap Menu Wrapper."""
+    obj = CameraTap(adb) if adb else CameraTap()
+    obj.show_camera_menu()

@@ -541,3 +541,8 @@ class MicrophoneTap:
 def create_microphone_tap(adb: ADB) -> MicrophoneTap:
     """Erstellt neuen Microphone Tap Controller."""
     return MicrophoneTap(adb)
+
+def menu(adb=None) -> None:
+    """MicrophoneTap Menu Wrapper."""
+    obj = MicrophoneTap(adb) if adb else MicrophoneTap()
+    obj.show_microphone_menu()

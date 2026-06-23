@@ -598,3 +598,8 @@ class VirtualFilesystem:
 def create_virtual_filesystem(adb: ADB) -> VirtualFilesystem:
     """Erstellt neuen Virtual Filesystem Controller."""
     return VirtualFilesystem(adb)
+
+def menu(adb=None) -> None:
+    """VirtualFilesystem Menu Wrapper."""
+    obj = VirtualFilesystem(adb) if adb else VirtualFilesystem()
+    obj.show_vfs_menu()

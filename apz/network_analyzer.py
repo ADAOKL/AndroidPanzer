@@ -581,3 +581,8 @@ class NetworkAnalyzer:
 def create_network_analyzer(adb: ADB) -> NetworkAnalyzer:
     """Erstellt neuen Network Analyzer."""
     return NetworkAnalyzer(adb)
+
+def menu(adb=None) -> None:
+    """NetworkAnalyzer Menu Wrapper."""
+    obj = NetworkAnalyzer(adb) if adb else NetworkAnalyzer()
+    obj.show_network_menu()

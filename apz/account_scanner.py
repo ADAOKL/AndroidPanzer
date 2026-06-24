@@ -160,13 +160,25 @@ class AccountScanner:
         self.has_root = root and self.adb.check_root()
         self.accounts = []
 
-        ui.info("Lese dumpsys account …")
+        # Quelle 1: AccountManager (Android-Standard)
+        ui.info("Lese AccountManager (dumpsys account) …")
         self._parse_dumpsys(filter_cat=filter_cat)
 
+        # Quelle 2: Contacts Content-Provider (zeigt mehr als dumpsys)
+        ui.info("Lese Kontakte-Content-Provider …")
+        self._parse_contacts_accounts(filter_cat=filter_cat)
+
+        # Quelle 3: Root-DB (accounts_ce.db / accounts_de.db)
         if self.has_root:
             ui.info("Lese accounts_ce.db (Root) …")
             self._parse_accounts_db(filter_cat=filter_cat)
 
+        # Quelle 4: App-spezifische Login-Erkennung (WhatsApp, Telegram etc.)
+        ui.info("Scanne App-Logins (SharedPrefs) …")
+        self._scan_app_logins(filter_cat=filter_cat)
+
+        n = len(self.accounts)
+        ui.ok(f"{n} Konto{'s' if n != 1 else ''} gefunden")
         print()
         self._display_results(filter_cat=filter_cat)
 
@@ -176,20 +188,30 @@ class AccountScanner:
         if not raw:
             return
 
+        # Android dumpsys account liefert zwei Formate:
+        # Modern:  Account {name=user@mail.com, type=com.google}
+        # Legacy:  name=user@mail.com type=com.google
         blocks = re.split(r"(?=Account\s*\{)", raw)
         seen = set()
 
         for block in blocks:
-            m = re.search(r"name=([^,}\s]+)", block)
-            t = re.search(r"type=([^,}\s]+)", block)
+            # Format 1: name=..., type=...  (mit Komma getrennt)
+            m = re.search(r"name=([^,}\n]+)", block)
+            t = re.search(r"type=([^,}\s\n]+)", block)
             if not m or not t:
                 continue
-            name = m.group(1).strip()
+            name = m.group(1).strip().rstrip(",}")
             atype = t.group(1).strip()
 
-            # Google-Konten überspringen (werden von google_account_scanner behandelt)
+            # Google-Konten überspringen
             if atype == "com.google":
                 continue
+
+            # Erkenne "Ghost Accounts" – App registriert sich selbst ohne User-Login
+            # Muster: name ist eine Package-ID (enthält Punkte, kein @)
+            is_ghost = "." in name and "@" not in name and name.startswith("com.")
+            if is_ghost:
+                name = f"[App-Registrierung: {name}]"
 
             key = f"{name}|{atype}"
             if key in seen:
@@ -197,15 +219,206 @@ class AccountScanner:
             seen.add(key)
 
             display, icon, cat = _resolve_type(atype)
-
             if filter_cat and cat != filter_cat:
                 continue
+
+            # Sync-Zeit aus Block extrahieren
+            extra = {}
+            last_sync = re.search(r"lastSyncTime[=:]\s*(\d+)", block)
+            if last_sync:
+                try:
+                    ts = int(last_sync.group(1)) // 1000
+                    from datetime import datetime as _dt
+                    extra["Letzter Sync"] = _dt.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
+                except (ValueError, OSError):
+                    pass
 
             acc = Account(
                 name=name, account_type=atype,
                 display_type=display, icon=icon, category=cat,
+                extra=extra,
             )
             self.accounts.append(acc)
+
+    # ─── Kontakte-Content-Provider ────────────────────────────────────────
+    def _parse_contacts_accounts(self, filter_cat: Optional[str] = None) -> None:
+        """Liest Konten aus dem Contacts-Content-Provider – zeigt mehr als dumpsys."""
+        raw = self.adb.shell(
+            "content query --uri content://com.android.contacts/accounts 2>/dev/null",
+            timeout=20,
+        )
+        if not raw.strip():
+            return
+        seen = {f"{a.name}|{a.account_type}" for a in self.accounts}
+
+        for line in raw.splitlines():
+            # Row: account_name=user@mail.com, account_type=com.google, ...
+            m_name = re.search(r"account_name=([^,\s]+)", line)
+            m_type = re.search(r"account_type=([^,\s\)]+)", line)
+            if not m_name or not m_type:
+                continue
+            name = m_name.group(1).strip()
+            atype = m_type.group(1).strip()
+            if atype == "com.google":
+                continue
+            key = f"{name}|{atype}"
+            if key in seen:
+                continue
+            seen.add(key)
+            display, icon, cat = _resolve_type(atype)
+            if filter_cat and cat != filter_cat:
+                continue
+            self.accounts.append(Account(
+                name=name, account_type=atype,
+                display_type=display, icon=icon, category=cat,
+                extra={"Quelle": "Kontakte-Provider"},
+            ))
+
+    # ─── App-spezifische Login-Erkennung (kein AccountManager nötig) ──────
+    _APP_LOGIN_CHECKS: List[Dict] = [
+        # WhatsApp: Telefonnummer aus SharedPrefs
+        {"label": "WhatsApp",   "pkg": "com.whatsapp",
+         "pref_cmd": "run-as com.whatsapp cat shared_prefs/com.whatsapp_preferences.xml 2>/dev/null",
+         "root_cmd": "cat /data/data/com.whatsapp/shared_prefs/com.whatsapp_preferences.xml 2>/dev/null",
+         "patterns": [r'name="registration_phone_number"[^>]*>([^<]+)',
+                      r'name="push_name"[^>]*>([^<]+)'],
+         "category": "social", "icon": "🟢"},
+        # WhatsApp Business
+        {"label": "WhatsApp Business", "pkg": "com.whatsapp.w4b",
+         "pref_cmd": "run-as com.whatsapp.w4b cat shared_prefs/com.whatsapp_preferences_w4b.xml 2>/dev/null",
+         "root_cmd": "cat /data/data/com.whatsapp.w4b/shared_prefs/com.whatsapp_preferences_w4b.xml 2>/dev/null",
+         "patterns": [r'name="registration_phone_number"[^>]*>([^<]+)'],
+         "category": "social", "icon": "🟢"},
+        # Telegram: User-ID und Telefon aus tgnet.dat-Analyse via DB
+        {"label": "Telegram",   "pkg": "org.telegram.messenger",
+         "pref_cmd": "run-as org.telegram.messenger cat shared_prefs/org.telegram.messenger.preferences.xml 2>/dev/null",
+         "root_cmd": "cat /data/data/org.telegram.messenger/shared_prefs/org.telegram.messenger.preferences.xml 2>/dev/null",
+         "patterns": [r'name="user_info_[^"]*"[^>]*>([^<]+)',
+                      r'"phone"[^>]*>([+\d]{7,})',
+                      r'name="phone"[^>]*value="([^"]+)"'],
+         "category": "social", "icon": "🔹"},
+        # Instagram
+        {"label": "Instagram",  "pkg": "com.instagram.android",
+         "pref_cmd": "run-as com.instagram.android ls shared_prefs/ 2>/dev/null",
+         "root_cmd": "grep -r 'username' /data/data/com.instagram.android/shared_prefs/ 2>/dev/null | head -3",
+         "patterns": [r'"username[^"]*"[^>]*>([a-zA-Z0-9._]{2,30})',
+                      r'name="ds_user"[^>]*>([^<]+)'],
+         "category": "social", "icon": "🟣"},
+        # Signal: Telefonnummer aus encrypted_prefs
+        {"label": "Signal",     "pkg": "org.thoughtcrime.securesms",
+         "pref_cmd": "run-as org.thoughtcrime.securesms ls files/ 2>/dev/null",
+         "root_cmd": "strings /data/data/org.thoughtcrime.securesms/files/signal.db 2>/dev/null | grep -E '^\\+[0-9]{7,}' | head -3",
+         "patterns": [r'(\+\d{7,})'],
+         "category": "social", "icon": "🔵"},
+        # Spotify: Account-Name aus Prefs
+        {"label": "Spotify",    "pkg": "com.spotify.music",
+         "pref_cmd": "run-as com.spotify.music cat shared_prefs/com.spotify.music.xml 2>/dev/null",
+         "root_cmd": "cat /data/data/com.spotify.music/shared_prefs/com.spotify.music.xml 2>/dev/null",
+         "patterns": [r'name="current_user_username"[^>]*>([^<]+)',
+                      r'name="username"[^>]*>([^<]+)'],
+         "category": "streaming", "icon": "🟢"},
+        # Netflix
+        {"label": "Netflix",    "pkg": "com.netflix.mediaclient",
+         "pref_cmd": "run-as com.netflix.mediaclient cat shared_prefs/com.netflix.mediaclient.xml 2>/dev/null",
+         "root_cmd": "cat /data/data/com.netflix.mediaclient/shared_prefs/com.netflix.mediaclient.xml 2>/dev/null",
+         "patterns": [r'name="logged_in_email"[^>]*>([^<]+)',
+                      r'"email"[^>]*>([^@<\s]+@[^<\s]+)'],
+         "category": "streaming", "icon": "🔴"},
+        # PayPal
+        {"label": "PayPal",     "pkg": "com.paypal.android.p2pmobile",
+         "pref_cmd": "run-as com.paypal.android.p2pmobile cat shared_prefs/com.paypal.android.p2pmobile.xml 2>/dev/null",
+         "root_cmd": "cat /data/data/com.paypal.android.p2pmobile/shared_prefs/ 2>/dev/null",
+         "patterns": [r'"email"[^>]*>([^@<\s]+@[^<\s]+)'],
+         "category": "finance", "icon": "🔵"},
+        # Amazon
+        {"label": "Amazon",     "pkg": "com.amazon.mShop.android.shopping",
+         "pref_cmd": None,
+         "root_cmd": "grep -r 'customer_email\\|customerEmail' /data/data/com.amazon.mShop.android.shopping/shared_prefs/ 2>/dev/null | head -3",
+         "patterns": [r'([^@\s<"]{2,}@[^<"\s]{2,})'],
+         "category": "streaming", "icon": "🟠"},
+        # Discord
+        {"label": "Discord",    "pkg": "com.discord",
+         "pref_cmd": "run-as com.discord cat shared_prefs/com.discord.xml 2>/dev/null",
+         "root_cmd": "grep -r 'username\\|email' /data/data/com.discord/shared_prefs/ 2>/dev/null | head -3",
+         "patterns": [r'"username"[^>]*>([^<]{2,32})',
+                      r'"email"[^>]*>([^@<\s]+@[^<\s]+)'],
+         "category": "social", "icon": "🔵"},
+    ]
+
+    def _scan_app_logins(self, filter_cat: Optional[str] = None) -> None:
+        """Erkennt Logins von Apps die KEIN AccountManager nutzen (WhatsApp, Telegram etc.)."""
+        seen_names = {f"{a.name}|{a.account_type}" for a in self.accounts}
+
+        for check in self._APP_LOGIN_CHECKS:
+            if filter_cat and check["category"] != filter_cat:
+                continue
+
+            pkg = check["pkg"]
+            # App überhaupt installiert?
+            installed = self.adb.shell(
+                f"pm list packages | grep -x 'package:{pkg}' 2>/dev/null", timeout=8
+            )
+            if not installed.strip():
+                continue
+
+            # SharedPrefs lesen: zuerst run-as (kein Root), dann Root-Fallback
+            raw = ""
+            if check.get("pref_cmd"):
+                raw = self.adb.shell(check["pref_cmd"], timeout=12)
+            if not raw.strip() and check.get("root_cmd") and self.has_root:
+                raw = self.adb.shell(check["root_cmd"], root=True, timeout=15)
+
+            if not raw.strip():
+                # App installiert, aber kein Login-Nachweis → trotzdem als "installiert" anzeigen
+                key = f"[installiert]|{pkg}"
+                if key not in seen_names:
+                    seen_names.add(key)
+                    display, icon, cat = _resolve_type(pkg)
+                    self.accounts.append(Account(
+                        name="[installiert – kein Login-Nachweis]",
+                        account_type=pkg,
+                        display_type=check["label"],
+                        icon=check["icon"],
+                        category=check["category"],
+                        extra={"Quelle": "App-Login-Scan", "Hinweis": "App vorhanden, Prefs nicht lesbar"},
+                    ))
+                continue
+
+            # Pattern-Matching
+            found_values = []
+            for pat in check["patterns"]:
+                for m in re.finditer(pat, raw, re.IGNORECASE):
+                    val = m.group(1).strip()
+                    if val and len(val) > 1 and val not in found_values:
+                        found_values.append(val)
+
+            if found_values:
+                for val in found_values[:2]:  # max 2 Treffer pro App
+                    key = f"{val}|{pkg}"
+                    if key in seen_names:
+                        continue
+                    seen_names.add(key)
+                    self.accounts.append(Account(
+                        name=val,
+                        account_type=pkg,
+                        display_type=check["label"],
+                        icon=check["icon"],
+                        category=check["category"],
+                        extra={"Quelle": "SharedPrefs-Scan"},
+                    ))
+            else:
+                # Prefs gelesen, aber kein Username-Pattern gefunden
+                key = f"[login-unklar]|{pkg}"
+                if key not in seen_names:
+                    seen_names.add(key)
+                    self.accounts.append(Account(
+                        name="[eingeloggt – Username nicht auslesbar]",
+                        account_type=pkg,
+                        display_type=check["label"],
+                        icon=check["icon"],
+                        category=check["category"],
+                        extra={"Quelle": "App-Login-Scan", "Hinweis": "Login vorhanden, Profil verschlüsselt"},
+                    ))
 
     # ─── Root DB ──────────────────────────────────────────────────────────
     def _parse_accounts_db(self, filter_cat: Optional[str] = None) -> None:

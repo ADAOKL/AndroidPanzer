@@ -1672,83 +1672,236 @@ def full_forensics_report(adb: ADB, dev=None, st=None, data=None) -> None:
         "high_risk_apps": [],
     }
 
-    # 1. Domains
-    ui.info("[1/8] DNS-Domains sammeln …")
+    # 1. Domains – 5 Quellen kombiniert
+    ui.info("[1/8] DNS-Domains sammeln (logcat + /proc/net + URLs) …")
+    all_domain_set: set[str] = set()
+
+    # Quelle 1a: logcat – lang genug mit mehr Tags
     raw_dns = adb.shell(
-        "logcat -d -t 500 2>/dev/null | grep -iE 'dns|getaddrinfo|resolv' | tail -n 200")
-    all_domains = list(set(_parse_dns_from_logcat(raw_dns)))
-    results["domains"] = sorted(all_domains)
+        "logcat -d -t 2000 2>/dev/null | grep -iE 'getaddrinfo|resolv|nativeresolv|mdns|dns' | tail -n 400",
+        timeout=20)
+    all_domain_set.update(_parse_dns_from_logcat(raw_dns))
+
+    # Quelle 1b: logcat – URL-Pattern aus HTTP/HTTPS-Verbindungen
+    url_log = adb.shell(
+        "logcat -d -t 2000 2>/dev/null | grep -oE 'https?://[a-zA-Z0-9._-]+' | sort -u | head -n 100",
+        timeout=20)
+    for m in re.finditer(r'https?://([a-zA-Z0-9._-]+)', url_log):
+        d = m.group(1)
+        if "." in d and len(d) > 4:
+            all_domain_set.add(d)
+
+    # Quelle 1c: /proc/net/tcp + tcp6 → IP → reverse DNS (nur die ersten 10 etablierten)
+    proc_tcp = adb.shell("cat /proc/net/tcp6 /proc/net/tcp 2>/dev/null | grep '00000000:0000' | head -15",
+                         timeout=10)
+    # Anmerkung: wir extrahieren Domains hier nicht – nur in Quelle 2 (Verbindungen)
+
+    # Quelle 1d: dumpsys netstats – Domains aus HTTP-Session-Daten
+    nstat = adb.shell("dumpsys netstats 2>/dev/null | grep -oE '[a-zA-Z0-9._-]+\\.[a-zA-Z]{2,6}' | sort -u | head -80",
+                      timeout=20)
+    for d in nstat.splitlines():
+        d = d.strip()
+        if "." in d and len(d) > 4 and not re.match(r'^\d+\.\d+', d):
+            all_domain_set.add(d)
+
+    # Quelle 1e: /data/misc/net/resolv.conf (Systemresolver, root)
+    resolv_conf = adb.shell("cat /data/misc/net/resolv.conf 2>/dev/null", root=True, timeout=10)
+    for line in resolv_conf.splitlines():
+        if line.startswith("search ") or line.startswith("domain "):
+            parts = line.split()
+            for p in parts[1:]:
+                if "." in p:
+                    all_domain_set.add(p.strip())
+
+    # Bekannte System-Domains herausfiltern
+    _SYSTEM_NOISE = {
+        "android.com", "google.com", "googleapis.com", "gstatic.com",
+        "googleusercontent.com", "gvt1.com", "l.google.com",
+        "clients.google.com", "connectivity-check.android.com",
+    }
+    all_domain_set -= _SYSTEM_NOISE
+
+    all_domains = sorted(all_domain_set)
+    results["domains"] = all_domains
     results["trackers"] = [d for d in all_domains if _is_tracker(d)]
     results["malware_domains"] = [d for d in all_domains if _is_malware(d)]
     print(f"    → {len(all_domains)} Domains  |  {len(results['trackers'])} Tracker  |  "
           f"{len(results['malware_domains'])} Malware")
 
-    # 2. Verbindungen
-    ui.info("[2/8] Verbindungen …")
-    conn_raw = adb.shell("ss -tnp 2>/dev/null | grep ESTAB | head -n 20")
+    # 2. Verbindungen – ss + netstat + /proc/net/tcp Fallback
+    ui.info("[2/8] Verbindungen (ss / netstat / /proc/net/tcp) …")
     conns = []
+    # Versuch 1: ss (moderne Android)
+    conn_raw = adb.shell("ss -tnp 2>/dev/null | grep ESTAB", timeout=15)
+    if not conn_raw.strip():
+        # Versuch 2: netstat
+        conn_raw = adb.shell("netstat -tn 2>/dev/null | grep ESTABLISHED | head -20", timeout=15)
     for line in conn_raw.splitlines():
         parts = line.split()
-        if len(parts) >= 5:
-            remote = parts[4]
-            proc = parts[-1] if '(' in parts[-1] else ""
-            proc = re.sub(r'.*"([^"]+)".*', r'\1', proc)
-            org, country = _lookup_ip_org(remote.split(':')[0])
-            conns.append({"remote": remote, "app": proc, "org": org, "country": country})
+        if len(parts) >= 4:
+            # ss: Proto RecvQ SendQ Local Remote State [Process]
+            # netstat: Proto RecvQ SendQ Local Remote State
+            remote_idx = 4 if "ESTAB" in line or "ss" in conn_raw[:20] else 4
+            remote = parts[remote_idx] if len(parts) > remote_idx else parts[-1]
+            proc = ""
+            for p in parts:
+                if '"' in p:
+                    proc = re.sub(r'.*"([^"]+)".*', r'\1', p)
+            ip_only = remote.split(':')[0]
+            if re.match(r'\d+\.\d+', ip_only):
+                org, country = _lookup_ip_org(ip_only)
+                conns.append({
+                    "remote": remote, "app": proc or "?",
+                    "org": org, "country": country,
+                })
     results["connections"] = conns
     print(f"    → {len(conns)} aktive Verbindungen")
 
-    # 3. DNS-Server
-    ui.info("[3/8] DNS-Server …")
-    for prop in ["net.dns1", "net.dns2", "dhcp.wlan0.dns1", "dhcp.rmnet0.dns1"]:
-        v = adb.shell(f"getprop {prop} 2>/dev/null").strip()
-        if v and re.match(r'\d+\.', v):
-            results["dns_servers"].append(v)
-    print(f"    → DNS-Server: {', '.join(set(results['dns_servers'])) or '—'}")
+    # 2b. Traffic-Statistiken pro App (/proc/net/xt_qtaguid/stats)
+    results.setdefault("traffic_stats", [])
+    tq_raw = adb.shell("cat /proc/net/xt_qtaguid/stats 2>/dev/null | head -60", timeout=10)
+    uid_traffic: dict[str, dict] = {}
+    for line in tq_raw.splitlines():
+        parts = line.split()
+        if len(parts) < 10 or not parts[3].isdigit():
+            continue
+        uid = parts[3]
+        try:
+            tx = int(parts[7]); rx = int(parts[5])
+            if uid not in uid_traffic:
+                uid_traffic[uid] = {"tx": 0, "rx": 0}
+            uid_traffic[uid]["tx"] += tx
+            uid_traffic[uid]["rx"] += rx
+        except (ValueError, IndexError):
+            continue
+    # Top 10 nach Upload
+    for uid, d in sorted(uid_traffic.items(), key=lambda x: x[1]["tx"], reverse=True)[:10]:
+        pkg_raw = adb.shell(f"pm list packages --uid {uid} 2>/dev/null", timeout=6)
+        pkg = re.search(r'package:(\S+)', pkg_raw)
+        results["traffic_stats"].append({
+            "uid": uid,
+            "pkg": pkg.group(1) if pkg else f"uid:{uid}",
+            "tx_mb": round(d["tx"] / 1_048_576, 2),
+            "rx_mb": round(d["rx"] / 1_048_576, 2),
+        })
+    if results["traffic_stats"]:
+        top = results["traffic_stats"][0]
+        print(f"    → Traffic-Stats: {len(uid_traffic)} UIDs – Größter Upload: {top['pkg']} ({top['tx_mb']} MB)")
 
-    # 4. TLS-Issues
+    # 3. DNS-Server – moderne und ältere Android-Varianten
+    ui.info("[3/8] DNS-Server …")
+    # Methode 1: getprop (Android 9-)
+    for prop in ["net.dns1", "net.dns2", "dhcp.wlan0.dns1", "dhcp.rmnet0.dns1",
+                 "net.wlan0.dns1", "net.wlan0.dns2"]:
+        v = adb.shell(f"getprop {prop} 2>/dev/null", timeout=6).strip()
+        if v and re.match(r'[\d.:a-fA-F]{4,}', v) and v not in results["dns_servers"]:
+            results["dns_servers"].append(v)
+    # Methode 2: getprop grep (fängt alle DNS-Props)
+    all_props = adb.shell("getprop 2>/dev/null | grep -iE '\\.dns|dns\\.' | head -20", timeout=10)
+    for m in re.finditer(r'\[[\w.]+\]:\s*\[([\d.:a-fA-F]+)\]', all_props):
+        v = m.group(1)
+        if re.match(r'\d+\.\d+', v) and v not in results["dns_servers"]:
+            results["dns_servers"].append(v)
+    # Methode 3: dumpsys connectivity (Android 10+)
+    conn_dump = adb.shell("dumpsys connectivity 2>/dev/null | grep -iE 'dns|DnsConfig' | head -15",
+                          timeout=15)
+    for m in re.finditer(r'(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})', conn_dump):
+        v = m.group(1)
+        if v not in results["dns_servers"] and not v.startswith("0."):
+            results["dns_servers"].append(v)
+    # Methode 4: nslookup selbst (checkt aktuell konfigurierten Resolver)
+    ns_out = adb.shell("nslookup androidpanzer.test 2>&1 | grep -i 'Server:' | head -1", timeout=8)
+    for m in re.finditer(r'(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})', ns_out):
+        v = m.group(1)
+        if v not in results["dns_servers"]:
+            results["dns_servers"].append(v)
+    print(f"    → DNS-Server: {', '.join(set(results['dns_servers'])) or '(nicht auslesbar)'}")
+
+    # 4. TLS-Issues – erweitert
     ui.info("[4/8] TLS-Analyse …")
     tls_raw = adb.shell(
-        "logcat -d -t 200 2>/dev/null | grep -iE 'ssl|tls|cert|handshake|x509' | tail -n 100")
-    for v in ["TLSv1.0", "TLSv1.1", "SSLv3"]:
-        if v in tls_raw:
-            results["tls_issues"].append(f"Veraltete TLS-Version: {v}")
-    if "CertificateException" in tls_raw or "SSLHandshakeException" in tls_raw:
-        results["tls_issues"].append("Zertifikat-Fehler erkannt")
+        "logcat -d -t 500 2>/dev/null | grep -iE 'ssl|tls|cert|handshake|x509|cipher' | tail -n 150",
+        timeout=20)
+    for v in ["TLSv1.0", "TLSv1.1", "SSLv3", "TLSv1 "]:
+        if v.lower() in tls_raw.lower():
+            results["tls_issues"].append(f"Veraltete TLS-Version gefunden: {v.strip()}")
+    if "CertificateException" in tls_raw:
+        results["tls_issues"].append("Zertifikat-Ausnahme in Logs (CertificateException)")
+    if "SSLHandshakeException" in tls_raw:
+        results["tls_issues"].append("TLS-Handshake-Fehler (SSLHandshakeException)")
+    if "CLEARTEXT" in tls_raw.upper():
+        results["tls_issues"].append("Cleartext-HTTP erkannt (kein TLS)")
+    # ClearText via network-security-config
+    nsc_raw = adb.shell(
+        "grep -rE 'cleartextTrafficPermitted.*true' /data/app/ 2>/dev/null | head -5", root=True, timeout=10)
+    if nsc_raw.strip():
+        results["tls_issues"].append(f"Apps mit cleartextTrafficPermitted=true: {nsc_raw.count('true')}")
     print(f"    → {len(results['tls_issues'])} TLS-Probleme")
 
-    # 5. PII
-    ui.info("[5/8] PII-Scan …")
+    # 5. PII-Scan – breiter
+    ui.info("[5/8] PII-Scan (logcat + Settings + getprop) …")
     pii_raw = adb.shell(
-        "logcat -d -t 300 2>/dev/null | grep -iE 'dns|url|http|upload|send' | tail -n 200")
+        "logcat -d -t 1000 2>/dev/null | grep -iE 'imei|location|gps|latitude|longitude|email|phone.*=' | tail -n 300",
+        timeout=20)
+    # Zusätzlich: Settings und getprop
+    pii_settings = adb.shell(
+        "settings get secure android_id 2>/dev/null && "
+        "service call iphonesubinfo 1 2>/dev/null | grep -oE '[0-9a-f ]{30}' | head -1",
+        timeout=10)
+    pii_raw += "\n" + pii_settings
+
     pii_pats = [
-        ("IMEI", r'\b\d{15}\b'),
-        ("GPS", r'\b-?\d{1,3}\.\d{5,}[,&]-?\d{1,3}\.\d{5,}'),
-        ("E-Mail", r'\b[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}\b'),
-        ("UUID", r'\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b'),
+        ("IMEI",  r'\b\d{15}\b'),
+        ("GPS",   r'\b-?\d{1,3}\.\d{5,}[,&\s]-?\d{1,3}\.\d{5,}'),
+        ("E-Mail",r'\b[a-zA-Z0-9._%+\-]{2,}@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}\b'),
+        ("UUID",  r'\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b'),
+        ("Phone", r'\b(\+?[1-9][0-9]{8,13})\b'),
     ]
+    seen_pii: set[str] = set()
     for name, pat in pii_pats:
-        m = re.search(pat, pii_raw)
-        if m:
-            results["pii_findings"].append(f"{name}: {m.group(0)[:30]}")
+        for m in re.finditer(pat, pii_raw):
+            val = m.group(0)[:35]
+            key = f"{name}:{val}"
+            if key not in seen_pii:
+                seen_pii.add(key)
+                results["pii_findings"].append(f"{name}: {val}")
     print(f"    → {len(results['pii_findings'])} PII-Treffer")
 
-    # 6. Internet-Apps (schnell)
-    ui.info("[6/8] Internet-Permission-Apps …")
-    internet_raw = adb.shell(
-        "dumpsys package 2>/dev/null | grep -c 'android.permission.INTERNET'")
+    # 6. Internet-Permission-Apps mit Paketliste
+    ui.info("[6/8] Internet-Permission-Apps (inkl. Liste) …")
+    internet_pkgs_raw = adb.shell(
+        "pm list packages -3 2>/dev/null", timeout=20)   # User-Apps
+    internet_pkgs = [l.replace("package:", "").strip() for l in internet_pkgs_raw.splitlines() if l.strip()]
+    results["apps_internet"] = len(internet_pkgs)
+    # Kategorisierung: System vs. User-Apps mit INTERNET
+    sys_internet = adb.shell(
+        "dumpsys package 2>/dev/null | grep -c 'android.permission.INTERNET'", timeout=25)
     try:
-        results["apps_internet"] = int(internet_raw.strip().splitlines()[0])
+        sys_count = int(sys_internet.strip().splitlines()[0])
     except Exception:
-        results["apps_internet"] = 0
-    print(f"    → {results['apps_internet']} Apps mit INTERNET-Permission")
+        sys_count = results["apps_internet"]
+    print(f"    → {results['apps_internet']} User-Apps | {sys_count} gesamt mit INTERNET-Permission")
 
-    # 7. Risiko-Apps
-    ui.info("[7/8] Risiko-Apps …")
-    risk_raw = adb.shell(
-        "dumpsys package 2>/dev/null | grep -B 5 'RECEIVE_BOOT_COMPLETED' | grep 'Package \\['")
-    for m in re.finditer(r'Package \[([^\]]+)\]', risk_raw):
-        results["high_risk_apps"].append(m.group(1))
+    # 7. Risiko-Apps – korrekte Methode
+    ui.info("[7/8] Risiko-Apps (Boot-Autostart + Netzwerk) …")
+    # Methode: pm list packages gibt uns alle Pakete, dann per-pkg prüfen (top-20 User-Apps)
+    boot_apps: list[str] = []
+    # Effiziente Methode: dumpsys package als Block parsen
+    dump_pkg = adb.shell(
+        "dumpsys package 2>/dev/null | grep -E '^  Package |RECEIVE_BOOT_COMPLETED' | head -200",
+        timeout=30)
+    current_pkg = ""
+    for line in dump_pkg.splitlines():
+        m_pkg = re.match(r'  Package \[([^\]]+)\]', line)
+        if m_pkg:
+            current_pkg = m_pkg.group(1)
+        elif "RECEIVE_BOOT_COMPLETED" in line and current_pkg:
+            # Nur Non-System-Pakete die auch INTERNET haben (wahrscheinlich)
+            if not current_pkg.startswith("com.android.") and not current_pkg.startswith("com.google."):
+                if current_pkg not in boot_apps:
+                    boot_apps.append(current_pkg)
+    results["high_risk_apps"] = boot_apps[:30]  # Top 30
+    print(f"    → {len(boot_apps)} Apps mit Boot-Autostart (Drittanbieter)")
     print(f"    → {len(results['high_risk_apps'])} Apps mit Auto-Start + Netz")
 
     # 8. Bericht schreiben
@@ -1756,15 +1909,27 @@ def full_forensics_report(adb: ADB, dev=None, st=None, data=None) -> None:
     fn_txt  = os.path.join(OUT, f"forensik_report_{ts}.txt")
     fn_json = os.path.join(OUT, f"forensik_report_{ts}.json")
 
-    risk_score = (
-        len(results["malware_domains"]) * 10 +
-        len(results["trackers"]) * 2 +
-        len(results["pii_findings"]) * 5 +
-        len(results["tls_issues"]) * 3
+    # Risiko-Score: mehrschichtig
+    _traffic_high = sum(
+        1 for t in results.get("traffic_stats", [])
+        if t.get("tx_mb", 0) > 50  # > 50 MB Upload = verdächtig
     )
-    risk_label = ("KRITISCH" if risk_score >= 30 else
-                  "HOCH" if risk_score >= 15 else
-                  "MITTEL" if risk_score >= 5 else "NIEDRIG")
+    _boot_count = len(results.get("high_risk_apps", []))
+    risk_score = (
+        len(results["malware_domains"]) * 15 +   # Malware-Domain = sofort kritisch
+        len(results["trackers"]) * 3 +            # Tracker = mittel
+        len(results["pii_findings"]) * 8 +        # PII-Leck = hoch
+        len(results["tls_issues"]) * 4 +          # TLS-Problem = moderat
+        min(_boot_count, 10) * 2 +               # Boot-Apps max +20
+        _traffic_high * 5                         # Hoher Upload max je App +5
+    )
+    if len(conns) > 20:
+        risk_score += 5   # Viele aktive Verbindungen
+    if results["apps_internet"] > 150:
+        risk_score += 5   # Sehr viele Internet-Apps
+    risk_label = ("KRITISCH" if risk_score >= 40 else
+                  "HOCH" if risk_score >= 20 else
+                  "MITTEL" if risk_score >= 8 else "NIEDRIG")
 
     with open(fn_txt, "w") as f:
         f.write("=" * 72 + "\n")
@@ -1779,7 +1944,14 @@ def full_forensics_report(adb: ADB, dev=None, st=None, data=None) -> None:
         f.write(f"  Aktive Verbindungen:  {len(conns)}\n")
         f.write(f"  PII-Lecks:            {len(results['pii_findings'])}\n")
         f.write(f"  TLS-Probleme:         {len(results['tls_issues'])}\n")
-        f.write(f"  Internet-Apps:        {results['apps_internet']}\n\n")
+        f.write(f"  Internet-Apps:        {results['apps_internet']}\n")
+        f.write(f"  Boot-Autostart-Apps:  {len(results.get('high_risk_apps', []))}\n")
+        f.write(f"  DNS-Server:           {', '.join(results['dns_servers']) or '(nicht ermittelt)'}\n\n")
+        if results.get("traffic_stats"):
+            f.write("── TRAFFIC-STATISTIK (Top 10 Upload) ───────────────────────────────\n")
+            for t in results["traffic_stats"][:10]:
+                f.write(f"  {t['pkg']:<45} TX: {t['tx_mb']:7.2f} MB  RX: {t['rx_mb']:7.2f} MB\n")
+            f.write("\n")
         if results["malware_domains"]:
             f.write("── MALWARE-DOMAINS (KRITISCH) ──────────────────────────────────────\n")
             for d in results["malware_domains"]:
@@ -1825,7 +1997,21 @@ def full_forensics_report(adb: ADB, dev=None, st=None, data=None) -> None:
     col = (ui.BRED if risk_label == "KRITISCH" else
            ui.BYELLOW if risk_label in ("HOCH", "MITTEL") else
            ui.BGREEN)
-    print(f"  {col}{ui.BOLD}RISIKO-SCORE: {risk_score} ({risk_label}){ui.RESET}\n")
+    print()
+    print(f"  {col}{ui.BOLD}RISIKO-SCORE: {risk_score} ({risk_label}){ui.RESET}")
+    print(f"  {'─'*52}")
+    print(f"  Domains gefunden   : {len(all_domains):>4}  (Tracker: {len(results['trackers'])}, Malware: {len(results['malware_domains'])})")
+    print(f"  Aktive Verbindungen: {len(conns):>4}")
+    print(f"  DNS-Server         : {', '.join(results['dns_servers'][:3]) or '(nicht ermittelt)'}")
+    print(f"  Boot-Autostart     : {len(results.get('high_risk_apps', [])):>4}  Drittanbieter-Apps")
+    print(f"  Traffic-Stats      : {len(results.get('traffic_stats', [])):>4}  Apps mit messbarem Traffic")
+    print(f"  PII-Treffer        : {len(results['pii_findings']):>4}")
+    print(f"  TLS-Probleme       : {len(results['tls_issues']):>4}")
+    if results.get("high_risk_apps"):
+        print(f"\n  Boot-Autostart-Apps (Auswahl):")
+        for app in results["high_risk_apps"][:5]:
+            print(f"    • {app}")
+    print()
     print(f"  {ui.BGREEN}✓ Bericht: {fn_txt}{ui.RESET}")
     print(f"  {ui.BGREEN}✓ JSON:    {fn_json}{ui.RESET}")
     if results["malware_domains"]:

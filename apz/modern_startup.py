@@ -257,9 +257,9 @@ def _blink_failures(failures: list[tuple[int, str, str]]) -> None:
     if lines == 0:
         return
 
-    BLINK_ON  = "\033[5m\033[91m"   # ANSI blink + hellrot
-    BLINK_OFF = "\033[91m"          # nur hellrot (kein blink)
-    RST       = "\033[0m"
+    BLINK_ON  = ui.BLINK + ui.BRED
+    BLINK_OFF = ui.BRED
+    RST       = ui.RESET
 
     def _print_failures(blink: bool) -> None:
         color = BLINK_ON if blink else BLINK_OFF
@@ -283,9 +283,9 @@ def _blink_warnings(warnings: list[tuple[int, str, list, list]]) -> None:
     lines = len(warnings)
     if lines == 0:
         return
-    WARN_ON  = "\033[5m\033[93m"   # blink + gelb
-    WARN_OFF = "\033[93m"
-    RST      = "\033[0m"
+    WARN_ON  = ui.BLINK + ui.BYELLOW
+    WARN_OFF = ui.BYELLOW
+    RST      = ui.RESET
 
     def _print_warns(blink: bool) -> None:
         c = WARN_ON if blink else WARN_OFF
@@ -656,29 +656,30 @@ def animate_startup() -> list[tuple[int, str, str]]:
 
 def show_feature_highlight() -> None:
     highlights = [
-        ("🧠 INTELLIGENTE KI-ANALYSE",   "150 KI-Funktionen analysieren alle 450 Features",    ui.BGREEN),
-        ("📊 LIVE DASHBOARDS",            "Echtzeit-Analyse mit interaktiven Dashboards",        ui.BCYAN),
-        ("🎙️ 📷 SURVEILLANCE TOOLS",      "Mikrofon & Kamera mit Recording und Live-Stream",     ui.BRED),
-        ("🌐 NETZWERK-FORENSIK",          "SIM, WiFi, Cellular – Vollständige Netzwerk-Analyse", ui.BCYAN),
-        ("💾 KERNEL-PROTECTED STORAGE",   "Virtual Filesystem – Daten vor Löschung geschützt",  ui.BGREEN),
-        ("🔍 CONTENT DETECTION",          "Adult-Content Scanner mit Keyword & Scoring",         ui.YELLOW),
+        ("🧠 INTELLIGENTE KI-ANALYSE",   "150 KI-Funktionen analysieren alle 450 Features"),
+        ("📊 LIVE DASHBOARDS",            "Echtzeit-Analyse mit interaktiven Dashboards"),
+        ("🎙  SURVEILLANCE TOOLS",        "Mikrofon & Kamera mit Recording und Live-Stream"),
+        ("🌐 NETZWERK-FORENSIK",          "SIM, WiFi, Cellular – Vollständige Netzwerk-Analyse"),
+        ("💾 KERNEL-PROTECTED STORAGE",   "Virtual Filesystem – Daten vor Löschung geschützt"),
+        ("🔍 CONTENT DETECTION",          "Adult-Content Scanner mit Keyword & Scoring"),
     ]
     h = highlights[int(time.time()) % len(highlights)]
-    print(f"\n{h[2]}")
-    print("┌────────────────────────────────────────────────────────────┐")
-    print(f"│  {ui.BOLD}{h[0]:56}{ui.RESET}{h[2]}  │")
-    print(f"│  {h[1]:56}  │")
-    print("└────────────────────────────────────────────────────────────┘")
-    print(f"{ui.RESET}\n")
+    w = ui.width()
+    inner = w - 4
+    title_pad = inner - 2
+    print(f"\n{ui.BCYAN}┌{'─' * (w - 2)}┐")
+    print(f"│  {ui.BOLD}{ui.WHITE}{h[0]:<{title_pad}}{ui.RESET}{ui.BCYAN}  │")
+    print(f"│  {ui.GREY}{h[1]:<{title_pad}}{ui.RESET}{ui.BCYAN}  │")
+    print(f"└{'─' * (w - 2)}┘{ui.RESET}\n")
 
 
 def show_version_info() -> None:
     from datetime import date
-    print(f"{ui.BCYAN}Version:{ui.RESET}")
-    print(f"  AndroidPanzer:    {ui.BOLD}2.0.0{ui.RESET}")
-    print(f"  Stand:            {ui.BOLD}{date.today().isoformat()}{ui.RESET}")
-    print(f"  Hauptmenü-Punkte: {ui.BOLD}{len(_MODULE_REGISTRY)}{ui.RESET}")
-    print(f"  Status:           {ui.BGREEN}Production Ready{ui.RESET}\n")
+    ui.rule("VERSION", ui.CYAN)
+    print(f"  AndroidPanzer    {ui.BOLD}2.0.0{ui.RESET}   "
+          f"{ui.GREY}Stand: {date.today().isoformat()}   "
+          f"{len(_MODULE_REGISTRY)} Hauptmenü-Punkte   {ui.RESET}"
+          f"{ui.BGREEN}Production Ready{ui.RESET}\n")
 
 
 def show_status_bar(status: str, progress: float = 0.0) -> None:
@@ -705,28 +706,20 @@ def show_enhanced_startup_system() -> None:
 
 
 def show_boot_device_analysis(adb, data: dict, st: dict) -> None:
-    """Live-Gerätedaten-Analyse bei jedem Bootvorgang – echte Daten, kein Cache."""
-    ui.clear()
+    """Sicherheits-Schnellcheck nach dem Dashboard (kein clear – hängt direkt dran)."""
     brand   = data.get("brand", "")
     model   = data.get("model", "")
     android = data.get("android_version", "") or data.get("version", "")
     serial  = data.get("serial", "")
     is_root = bool(st.get("is_root"))
 
-    print(f"\n{ui.BCYAN}{'━'*78}{ui.RESET}")
-    print(f"  {ui.BOLD}{ui.BGREEN}🔄 BOOT-ANALYSE – GERÄTE-SICHERHEITSSTATUS{ui.RESET}  {ui.GREY}(Echtzeit, kein Cache){ui.RESET}")
-    print(f"{ui.BCYAN}{'━'*78}{ui.RESET}\n")
+    ui.rule("SICHERHEITS-SCHNELLCHECK  (Echtzeit, kein Cache)", ui.CYAN)
+    print()
 
-    # Gerät
-    print(f"  {ui.BOLD}📱 Gerät{ui.RESET}")
-    print(f"     Modell      : {brand} {model}  ({serial})")
-    print(f"     Android     : {android or '—'}")
-    root_icon = f"{ui.BGREEN}✅ ROOT AKTIV{ui.RESET}" if is_root else f"{ui.GREY}○ kein Root{ui.RESET}"
-    print(f"     Zugriff     : {root_icon}\n")
+    root_icon = f"{ui.BGREEN}ROOT AKTIV{ui.RESET}" if is_root else f"{ui.GREY}kein Root{ui.RESET}"
+    print(f"  {ui.BOLD}{brand} {model}{ui.RESET}  {ui.GREY}({serial})  Android {android or '—'}  {root_icon}{ui.RESET}\n")
 
-    # Live ADB-Checks – parallel für schnellere Anzeige
     risk_count = 0
-    print(f"  {ui.BOLD}🔐 Sicherheits-Schnellcheck{ui.RESET}")
 
     def _chk(cmd: str, timeout: int = 6) -> str:
         try:
@@ -802,15 +795,13 @@ def show_boot_device_analysis(adb, data: dict, st: dict) -> None:
         battery = bat_raw.replace("level:", "").strip() + "%" if bat_raw else "—"
     print(f"     Akku             : {battery}\n")
 
-    print(f"  {ui.BOLD}🎯 Risiko-Bewertung{ui.RESET}")
     if risk_count == 0:
-        print(f"     {ui.BGREEN}✅  KEIN SICHERHEITSRISIKO ERKANNT{ui.RESET}")
+        ui.ok("KEIN SICHERHEITSRISIKO ERKANNT")
     elif risk_count == 1:
-        print(f"     {ui.BYELLOW}⚠   1 RISIKO – Gerät prüfen (SELinux / CAs / Encryption){ui.RESET}")
+        ui.warn(f"1 RISIKO – Gerät prüfen (SELinux / CAs / Encryption)")
     else:
-        print(f"     {ui.BRED}🚨  {risk_count} RISIKEN ERKANNT – sofortige Forensik empfohlen{ui.RESET}")
-
-    print(f"\n{ui.BCYAN}{'━'*78}{ui.RESET}\n")
+        ui.err(f"{risk_count} RISIKEN ERKANNT – sofortige Forensik empfohlen")
+    print()
 
 
 def create_modern_startup(adb=None):

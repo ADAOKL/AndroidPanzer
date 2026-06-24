@@ -125,107 +125,34 @@ class NumericMainMenu:
         self.adb = adb
         self.handlers = {}
 
+    # TIER-Gruppen: (titel, slice_start, slice_end)
+    _TIERS = [
+        ("TIER  1 · BASIS-ANALYSE",                  0,  5),
+        ("TIER  2 · AUDIO / VIDEO / NETZWERK",        5,  8),
+        ("TIER  3 · FORENSIK & SCANNING",             8, 13),
+        ("TIER  4 · ERWEITERTE TOOLS",               13, 18),
+        ("TIER  5 · SPECIALS & ADVANCED",            18, 24),
+        ("TIER  6 · SECURITY & INTELLIGENCE",        24, 30),
+        ("TIER  7 · NEW ADVANCED FEATURES",          30, 33),
+        ("TIER  8 · FORENSIC & SECURITY ADVANCED",   33, 40),
+        ("TIER  9 · KLASSISCHE TOOLS",               40, 54),
+        ("TIER 10 · SIM-KARTEN TOOLKIT",             54, 55),
+        ("TIER 11 · APP-DOMAIN MONITOR",             55, 56),
+        ("TIER 12 · PLAY STORE FORENSICS",           56, 57),
+        ("TIER 13 · NEUE FORENSIK-MODULE",           57, None),
+    ]
+
     def show_numeric_menu(self, handler_map: dict) -> str:
-        """Zeigt Numeric Menu und gibt Auswahl zurück."""
-        ui.clear()
-        ui.banner(subtitle="🔢 ANDROID PANZER - NUMERIC MENU")
+        """Zeigt Numeric Menu unterhalb des bereits gesetzten Banners."""
         print()
+        for title, start, end in self._TIERS:
+            ui.rule(title, ui.CYAN)
+            for num, icon, desc, key in self.MENU_ITEMS[start:end]:
+                print(f"  {ui.BOLD}{num:2d}{ui.RESET}  {_ljust(icon, 30)}  {ui.GREY}{desc}{ui.RESET}")
+            print()
 
-        # Gruppe 1
-        print(f"{ui.BGREEN}{'TIER 1: BASIS-ANALYSE':^80}{ui.RESET}")
-        print()
-        for num, icon, desc, key in self.MENU_ITEMS[0:5]:
-            print(f"  {ui.BOLD}{num:2d}{ui.RESET}  {_ljust(icon, 30)}  {desc}")
-        print()
-
-        # Gruppe 2
-        print(f"{ui.BCYAN}{'TIER 2: AUDIO & VIDEO & NETZWERK':^80}{ui.RESET}")
-        print()
-        for num, icon, desc, key in self.MENU_ITEMS[5:8]:
-            print(f"  {ui.BOLD}{num:2d}{ui.RESET}  {_ljust(icon, 30)}  {desc}")
-        print()
-
-        # Gruppe 3
-        print(f"{ui.BYELLOW}{'TIER 3: FORENSIK & SCANNING':^80}{ui.RESET}")
-        print()
-        for num, icon, desc, key in self.MENU_ITEMS[8:13]:
-            print(f"  {ui.BOLD}{num:2d}{ui.RESET}  {_ljust(icon, 30)}  {desc}")
-        print()
-
-        # Gruppe 4
-        print(f"{ui.BMAGENTA}{'TIER 4: ERWEITERTE TOOLS':^80}{ui.RESET}")
-        print()
-        for num, icon, desc, key in self.MENU_ITEMS[13:18]:
-            print(f"  {ui.BOLD}{num:2d}{ui.RESET}  {_ljust(icon, 30)}  {desc}")
-        print()
-
-        # Gruppe 5
-        print(f"{ui.BRED}{'TIER 5: SPECIALS & ADVANCED':^80}{ui.RESET}")
-        print()
-        for num, icon, desc, key in self.MENU_ITEMS[18:24]:
-            print(f"  {ui.BOLD}{num:2d}{ui.RESET}  {_ljust(icon, 30)}  {desc}")
-        print()
-
-        # Gruppe 6
-        print(f"{ui.BGREEN}{'TIER 6: SECURITY & INTELLIGENCE':^80}{ui.RESET}")
-        print()
-        for num, icon, desc, key in self.MENU_ITEMS[24:30]:
-            print(f"  {ui.BOLD}{num:2d}{ui.RESET}  {_ljust(icon, 30)}  {desc}")
-        print()
-
-        # Gruppe 7
-        print(f"{ui.BCYAN}{'TIER 7: NEW ADVANCED FEATURES':^80}{ui.RESET}")
-        print()
-        for num, icon, desc, key in self.MENU_ITEMS[30:33]:
-            print(f"  {ui.BOLD}{num:2d}{ui.RESET}  {_ljust(icon, 30)}  {desc}")
-        print()
-
-        # Gruppe 8
-        print(f"{ui.BMAGENTA}{'TIER 8: FORENSIC & SECURITY ADVANCED':^80}{ui.RESET}")
-        print()
-        for num, icon, desc, key in self.MENU_ITEMS[33:40]:
-            print(f"  {ui.BOLD}{num:2d}{ui.RESET}  {_ljust(icon, 30)}  {desc}")
-        print()
-
-        # Gruppe 9
-        print(f"{ui.BGREEN}{'TIER 9: KLASSISCHE TOOLS (aus alter Version)':^80}{ui.RESET}")
-        print()
-        for num, icon, desc, key in self.MENU_ITEMS[40:54]:
-            print(f"  {ui.BOLD}{num:2d}{ui.RESET}  {_ljust(icon, 30)}  {desc}")
-        print()
-
-        # Gruppe 10: SIM-Toolkit
-        print(f"{ui.BCYAN}{'TIER 10: SIM-KARTEN TOOLKIT':^80}{ui.RESET}")
-        print()
-        for num, icon, desc, key in self.MENU_ITEMS[54:55]:
-            print(f"  {ui.BOLD}{num:2d}{ui.RESET}  {_ljust(icon, 30)}  {desc}")
-        print()
-
-        # Gruppe 11: App-Domain Monitor
-        print(f"{ui.BGREEN}{'TIER 11: APP-DOMAIN MONITOR':^80}{ui.RESET}")
-        print()
-        for num, icon, desc, key in self.MENU_ITEMS[55:56]:
-            print(f"  {ui.BOLD}{num:2d}{ui.RESET}  {_ljust(icon, 30)}  {desc}")
-        print()
-
-        # Gruppe 12: Play Store Forensics
-        print(f"{ui.BGREEN}{'TIER 12: PLAY STORE FORENSICS':^80}{ui.RESET}")
-        print()
-        for num, icon, desc, key in self.MENU_ITEMS[56:57]:
-            print(f"  {ui.BOLD}{num:2d}{ui.RESET}  {_ljust(icon, 30)}  {desc}")
-        print()
-
-        # Gruppe 13: Neue Forensik-Module
-        print(f"{ui.BMAGENTA}{'TIER 13: NEUE FORENSIK-MODULE':^80}{ui.RESET}")
-        print()
-        for num, icon, desc, key in self.MENU_ITEMS[57:]:
-            print(f"  {ui.BOLD}{num:2d}{ui.RESET}  {_ljust(icon, 30)}  {desc}")
-        print()
-
-        print(f"{ui.BGREEN}{'='*80}{ui.RESET}")
-        print()
-        print("   0  Zurück / Gerät wechseln")
-        print("   Q  Beenden")
+        ui.rule(color=ui.CYAN)
+        print(f"  {ui.GREY}  0  Zurück / Gerät wechseln     Q  Beenden{ui.RESET}")
         print()
 
         choice = input(f"  {ui.BOLD}☠ ❯ Auswahl (0-60, Q): {ui.RESET}").strip().upper()

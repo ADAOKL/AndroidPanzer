@@ -746,13 +746,13 @@ def run() -> int:
             except Exception as e:  # noqa: BLE001
                 LOG.exception("rootprep-start", e)
 
-        # Boot-Analyse: echte Gerätedaten bei jedem Start neu einlesen
+        dashboard.render(adb, dev, data)
+
+        # Sicherheits-Schnellcheck direkt nach dem Dashboard (kein clear)
         try:
             modern_startup.show_boot_device_analysis(adb, data, st)
         except Exception as e:  # noqa: BLE001
             LOG.exception("boot-device-analysis", e)
-
-        dashboard.render(adb, dev, data)
 
         if not st["is_root"]:
             ui.info(lang.t("run_not_rooted"))

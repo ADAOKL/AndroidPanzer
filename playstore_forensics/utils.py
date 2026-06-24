@@ -9,8 +9,6 @@ import tempfile
 from pathlib import Path
 from typing import Generator
 
-import sys
-sys.path.insert(0, str(Path(__file__).parent.parent))
 from apz.adb import ADB
 from apz.util import shq
 

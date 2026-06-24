@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field, asdict
-from typing import Optional
+from typing import Optional, Protocol, runtime_checkable
 
 
 # ---------------------------------------------------------------------------
@@ -29,6 +29,25 @@ def _fmt_ts(raw: str | int | None) -> str:
         return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(v))
     except (OSError, OverflowError, ValueError):
         return str(raw)
+
+
+# ---------------------------------------------------------------------------
+# 0 – Gemeinsames APK-Result-Protocol
+# ---------------------------------------------------------------------------
+
+@runtime_checkable
+class BaseApkResult(Protocol):
+    """Gemeinsames Interface für ApkArtifact und ApkDeepScanResult.
+
+    Beide APK-Scanner-Typen implementieren dieses Protocol implizit –
+    kein Erben nötig, duck-typing genügt für isinstance()-Checks.
+    """
+    package:        str
+    apk_path:       str
+    hardcoded_ips:  list
+    risk_level:     str
+
+    def to_text(self) -> str: ...
 
 
 # ---------------------------------------------------------------------------
@@ -166,14 +185,20 @@ class ApkArtifact:
             "LOW"
         )
 
-    def __str__(self) -> str:
+    def to_text(self) -> str:
         flags = []
         if not self.signature_valid:     flags.append("INVALID_SIG")
         if self.hardcoded_ips:           flags.append(f"IPs:{len(self.hardcoded_ips)}")
         if self.suspicious_perms:        flags.append(f"PERMS:{len(self.suspicious_perms)}")
         if self.known_c2_domains:        flags.append(f"C2:{len(self.known_c2_domains)}")
         flag_str = " | ".join(flags) if flags else "sauber"
-        return f"  [{self.risk_level}] {self.package} → {flag_str}"
+        lines = [f"  [{self.risk_level}] {self.package} → {flag_str}"]
+        if self.strings_of_interest:
+            lines.append(f"    Strings: {', '.join(self.strings_of_interest[:3])}")
+        return "\n".join(lines)
+
+    def __str__(self) -> str:
+        return self.to_text()
 
 
 # ---------------------------------------------------------------------------

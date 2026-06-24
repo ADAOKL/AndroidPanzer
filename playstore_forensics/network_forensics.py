@@ -15,10 +15,6 @@ import struct
 import socket
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
-import sys
-
-sys.path.insert(0, str(Path(__file__).parent.parent))
 from apz.adb import ADB
 from apz.util import shq
 
@@ -674,8 +670,8 @@ def run_network_forensics(adb: ADB, dev, st: dict) -> dict:
     )
 
     # 5. Zusammenfassung
-    est   = sum(1 for c in conns if c.state == "ESTABLISHED")
-    lst   = sum(1 for c in conns if c.state == "LISTEN")
+    est   = sum(1 for c in conns if c.state in ("ESTABLISHED", "ESTAB"))
+    lst   = sum(1 for c in conns if c.state in ("LISTEN", "LISTEN"))
     total_tx = sum(s.tx_bytes for s in traffic) / 1_048_576
     total_rx = sum(s.rx_bytes for s in traffic) / 1_048_576
 

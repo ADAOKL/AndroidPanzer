@@ -6,12 +6,8 @@ auf dem Gerät selbst: aapt/aapt2, strings, unzip, grep.
 from __future__ import annotations
 
 import re
-import sys
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Optional
-
-sys.path.insert(0, str(Path(__file__).parent.parent))
 from apz.adb import ADB
 from apz.util import shq
 
@@ -495,16 +491,17 @@ def check_malware_strings(adb: ADB, apk_path: str, root: bool = False) -> list[s
             found.append(line[:120])
 
     # Regex-Patterns via grep auf Device
-    for pattern in MALWARE_REGEX_STRINGS:
-        hit = adb.shell(
-            f"strings -n 4 {shq(apk_path)} 2>/dev/null | "
-            f"grep -E {shq(pattern)} 2>/dev/null | head -n 3",
-            root=root, timeout=15,
-        )
-        for line in hit.splitlines():
-            line = line.strip()
-            if line and line not in found:
-                found.append(line[:120])
+    # Alle Regex-Patterns in einem einzigen grep-Aufruf (statt 9 × 15s ADB-Calls)
+    combined_regex = "|".join(MALWARE_REGEX_STRINGS)
+    hit = adb.shell(
+        f"strings -n 4 {shq(apk_path)} 2>/dev/null | "
+        f"grep -E {shq(combined_regex)} 2>/dev/null | head -n 20",
+        root=root, timeout=30,
+    )
+    for line in hit.splitlines():
+        line = line.strip()
+        if line and line not in found:
+            found.append(line[:120])
 
     return found
 

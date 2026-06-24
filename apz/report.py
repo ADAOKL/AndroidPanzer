@@ -275,6 +275,151 @@ def generate(data: dict | None = None, formats=("html", "md", "json", "manifest"
 # --------------------------------------------------------------------------- #
 #  Menü
 # --------------------------------------------------------------------------- #
+def _open_browser(path: str) -> None:
+    import subprocess as sp
+    try:
+        sp.Popen(["xdg-open", path])
+        ui.ok(f"Browser geöffnet: {path}")
+    except Exception as e:
+        ui.err(f"Konnte nicht öffnen: {e}")
+
+
+def _zip_artifacts() -> None:
+    import zipfile
+    items = collect()
+    if not items:
+        ui.warn("Keine Artefakte gefunden."); ui.pause(); return
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    rdir = os.path.join(BASE, REPORT_DIR)
+    os.makedirs(rdir, exist_ok=True)
+    zpath = os.path.join(rdir, f"forensik_archive_{stamp}.zip")
+    ui.info(f"Erstelle ZIP mit {len(items)} Dateien …")
+    count = 0
+    with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as zf:
+        for it in items:
+            try:
+                zf.write(it["path"], it["rel"])
+                count += 1
+            except OSError as e:
+                LOG.exception(f"zip: {it['path']}", e)
+    ui.ok(f"{count} Dateien archiviert → {zpath}")
+    size = os.path.getsize(zpath)
+    ui.kv("ZIP-Größe", human_size(size))
+    ui.pause()
+
+
+def _cleanup_old() -> None:
+    rdir = os.path.join(BASE, REPORT_DIR)
+    if not os.path.isdir(rdir):
+        ui.warn("Noch kein Report-Verzeichnis."); ui.pause(); return
+    files = sorted(
+        [os.path.join(rdir, f) for f in os.listdir(rdir)],
+        key=os.path.getmtime
+    )
+    if not files:
+        ui.info("Kein Inhalt."); ui.pause(); return
+    total_size = sum(os.path.getsize(f) for f in files if os.path.isfile(f))
+    print(f"\n  {len(files)} Dateien · {human_size(total_size)} in {rdir}\n")
+    for i, f in enumerate(files[-20:], 1):
+        ts = time.strftime("%Y-%m-%d %H:%M", time.localtime(os.path.getmtime(f)))
+        size = os.path.getsize(f) if os.path.isfile(f) else 0
+        print(f"  {i:2}. {ts}  {os.path.basename(f):<50s}  {human_size(size)}")
+    print()
+    days = ui.ask("Dateien älter als X Tage löschen (0 = abbrechen)").strip()
+    try:
+        d = int(days)
+        if d <= 0:
+            return
+    except ValueError:
+        return
+    cutoff = time.time() - d * 86400
+    to_del = [f for f in files if os.path.isfile(f) and os.path.getmtime(f) < cutoff]
+    if not to_del:
+        ui.info(f"Keine Dateien älter als {d} Tage."); ui.pause(); return
+    if ui.confirm(f"{len(to_del)} Dateien löschen?", False):
+        for f in to_del:
+            try:
+                os.unlink(f)
+            except OSError:
+                pass
+        ui.ok(f"{len(to_del)} Dateien gelöscht.")
+    ui.pause()
+
+
+def _show_artifacts() -> None:
+    """Artefakte nach Kategorie filtern und anzeigen."""
+    items = collect()
+    if not items:
+        ui.warn("Keine Artefakte gefunden."); ui.pause(); return
+    cats = sorted(set(it["section"] for it in items))
+    print(f"\n  Kategorien: {', '.join(cats)}\n")
+    filt = ui.ask("Filter (Kategorie-Name oder leer = alle)").strip().lower()
+    filtered = [it for it in items
+                if not filt or filt in it["section"].lower() or filt in it["category"].lower()]
+    ui.clear()
+    ui.rule(f"Artefakte · {len(filtered)} Dateien", ui.CYAN)
+    total_sz = 0
+    for it in sorted(filtered, key=lambda x: (x["section"], x["name"])):
+        total_sz += it["size"]
+        col = ui.BGREEN if it["is_text"] else ui.GREY
+        print(f"  {col}{it['section']:20s}{ui.RESET}  {it['name']:<45s}  {human_size(it['size']):>8s}  {it['mtime']}")
+    print(f"\n  Gesamt: {human_size(total_sz)}")
+    ui.pause()
+
+
+def _compare_manifests() -> None:
+    """Zwei Manifeste vergleichen (Diff)."""
+    rdir = os.path.join(BASE, REPORT_DIR)
+    if not os.path.isdir(rdir):
+        ui.warn("Kein Report-Verzeichnis."); ui.pause(); return
+    mans = sorted([f for f in os.listdir(rdir) if f.startswith("MANIFEST_") and f.endswith(".sha256")])
+    if len(mans) < 2:
+        ui.warn(f"Mindestens 2 Manifeste nötig (gefunden: {len(mans)})."); ui.pause(); return
+    for i, m in enumerate(mans, 1):
+        print(f"  {i:2}. {m}")
+    a_idx = ui.ask("Älteres Manifest Nr.", "1")
+    b_idx = ui.ask("Neueres Manifest Nr.", str(len(mans)))
+    try:
+        man_a = os.path.join(rdir, mans[int(a_idx) - 1])
+        man_b = os.path.join(rdir, mans[int(b_idx) - 1])
+    except (ValueError, IndexError):
+        ui.err("Ungültige Auswahl."); ui.pause(); return
+
+    def _load_man(path):
+        result = {}
+        with open(path, encoding="utf-8") as f:
+            for ln in f:
+                ln = ln.strip()
+                if ln:
+                    h, _, rel = ln.partition("  ")
+                    result[rel] = h
+        return result
+
+    a_data = _load_man(man_a)
+    b_data = _load_man(man_b)
+    added = set(b_data) - set(a_data)
+    removed = set(a_data) - set(b_data)
+    changed = {k for k in a_data if k in b_data and a_data[k] != b_data[k]}
+
+    ui.clear()
+    ui.rule("Manifest-Vergleich (Diff)", ui.CYAN)
+    ui.kv(f"{os.path.basename(man_a)} → {os.path.basename(man_b)}", "")
+    print()
+    if not added and not removed and not changed:
+        ui.ok("Keine Unterschiede – Artefakte unverändert.")
+    else:
+        if added:
+            print(f"  {ui.BGREEN}+ NEU ({len(added)}):{ui.RESET}")
+            for r in sorted(added)[:20]: print(f"    {ui.BGREEN}{r}{ui.RESET}")
+        if removed:
+            print(f"\n  {ui.BRED}– GELÖSCHT ({len(removed)}):{ui.RESET}")
+            for r in sorted(removed)[:20]: print(f"    {ui.BRED}{r}{ui.RESET}")
+        if changed:
+            print(f"\n  {ui.BYELLOW}~ GEÄNDERT ({len(changed)}):{ui.RESET}")
+            for r in sorted(changed)[:20]: print(f"    {ui.BYELLOW}{r}{ui.RESET}")
+    ui.pause()
+
+
 def menu(adb=None, dev=None, st=None, data=None) -> None:
     while True:
         ui.clear()
@@ -283,17 +428,24 @@ def menu(adb=None, dev=None, st=None, data=None) -> None:
         n = len(items_preview)
         size = sum(i["size"] for i in items_preview)
         ui.kv("Gefundene Artefakte", f"{n} Dateien · {human_size(size)}")
-        secs = {}
+        secs: dict = {}
         for it in items_preview:
-            secs[it["category"]] = secs.get(it["category"], 0) + 1
+            secs[it["section"]] = secs.get(it["section"], 0) + 1
         for cat, c in sorted(secs.items()):
             ui.kv(f"  {cat}", c)
         print()
         ch = ui.menu("Aktion", [
-            ("1", "📄 Gesamt-Report erzeugen (HTML + Markdown + JSON + SHA-256-Manifest)"),
-            ("2", "🌐 Nur HTML-Report"),
-            ("3", "🔐 Nur SHA-256-Manifest (Chain-of-Custody)"),
-            ("4", "✅ Manifest verifizieren (Integritätsprüfung)"),
+            ("1",  "📄 Gesamt-Report      (HTML + Markdown + JSON + SHA-256-Manifest)"),
+            ("2",  "🌐 Nur HTML-Report"),
+            ("3",  "📝 Nur Markdown-Report"),
+            ("4",  "📦 Nur JSON-Export"),
+            ("5",  "🔐 Nur SHA-256-Manifest (Chain-of-Custody)"),
+            ("6",  "✅ Manifest verifizieren (Integritätsprüfung)"),
+            ("7",  "🌐 Letzten HTML-Report im Browser öffnen"),
+            ("8",  "🗜  ZIP-Archiv aller Artefakte erstellen"),
+            ("9",  "🔍 Artefakte filtern & anzeigen"),
+            ("10", "↔  Zwei Manifeste vergleichen (Diff)"),
+            ("11", "🗑  Alte Reports aufräumen"),
         ], back_label="Hauptmenü")
         if ch in ("back", "quit"):
             return
@@ -302,11 +454,33 @@ def menu(adb=None, dev=None, st=None, data=None) -> None:
         elif ch == "2":
             _do(data, ("html",))
         elif ch == "3":
-            _do(data, ("manifest",))
+            _do(data, ("md",))
         elif ch == "4":
+            _do(data, ("json",))
+        elif ch == "5":
+            _do(data, ("manifest",))
+        elif ch == "6":
             _verify()
-        else:
-            ui.warn("Ungültige Auswahl."); time.sleep(0.6)
+        elif ch == "7":
+            rdir = os.path.join(BASE, REPORT_DIR)
+            htmls = sorted(
+                [os.path.join(rdir, f) for f in os.listdir(rdir) if f.endswith(".html")]
+                if os.path.isdir(rdir) else [],
+                key=os.path.getmtime
+            )
+            if htmls:
+                _open_browser(htmls[-1])
+            else:
+                ui.warn("Noch kein HTML-Report vorhanden – zuerst erzeugen.")
+            ui.pause()
+        elif ch == "8":
+            _zip_artifacts()
+        elif ch == "9":
+            _show_artifacts()
+        elif ch == "10":
+            _compare_manifests()
+        elif ch == "11":
+            _cleanup_old()
 
 
 def _do(data, formats) -> None:

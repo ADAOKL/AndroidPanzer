@@ -18,6 +18,7 @@ from .password_manager import ModuleType, PasswordManager, PasswordValidator
 # Persistenz
 # ─────────────────────────────────────────────────────────────
 _CONFIG_PATH = os.path.expanduser("~/.config/android-panzer/settings.json")
+_LOG_PATH    = os.path.expanduser("~/.config/android-panzer/session.log")
 
 _DEFAULTS: Dict[str, Any] = {
     "theme":         "dark",
@@ -27,6 +28,11 @@ _DEFAULTS: Dict[str, Any] = {
     "video_quality": "1080p",
     "timeout":       30,
     "debug_mode":    False,
+    "ollama_url":    "http://localhost:11434",
+    "adb_host":      "localhost",
+    "adb_port":      5037,
+    "output_base":   "~/Schreibtisch/Androidpanzer",
+    "log_level":     "INFO",
 }
 
 
@@ -248,6 +254,13 @@ _SYSTEM_FIELDS = [
     ("video_quality", "Video-Qualität",   "choice",  ["480p", "720p", "1080p", "4k"]),
     ("timeout",       "ADB Timeout (s)",  "int",     None),
     ("debug_mode",    "Debug-Modus",      "bool",    None),
+    ("log_level",     "Log-Level",        "choice",  ["DEBUG", "INFO", "WARNING", "ERROR"]),
+]
+
+_NETWORK_FIELDS = [
+    ("ollama_url",    "Ollama API URL",   "str",     None),
+    ("adb_host",      "ADB Host",         "str",     None),
+    ("adb_port",      "ADB Port",         "int",     None),
 ]
 
 

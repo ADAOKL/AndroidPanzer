@@ -57,3 +57,10 @@ tools-node/node_modules/
 # Laufzeit
 *.log
 *.tmp
+
+# PlayStore Forensics Ausgaben & Gerätedaten
+psf_demo_output/
+psf_live_output/
+psf_output/
+sim_toolkit/
+sys

@@ -57,11 +57,15 @@ def _progress(i: int, total: int, label: str) -> None:
 
 
 def _write(name: str, content: str) -> str:
-    os.makedirs(OUT, exist_ok=True)
-    path = os.path.join(OUT, name)
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(content)
-    return path
+    try:
+        os.makedirs(OUT, exist_ok=True)
+        path = os.path.join(OUT, name)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+        return path
+    except OSError as e:
+        print(f"  ⚠ Schreib-Fehler: {e}", file=sys.stderr)
+        return ""
 
 
 def _build_report(adb: ADB, st: dict, tasks: list[str]) -> ForensicReport:

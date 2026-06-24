@@ -77,6 +77,11 @@ def pull_db_via_sdcard(adb: ADB, db_path: str, local_path: str, root: bool = Tru
 
     Gibt True zurück wenn erfolgreich.
     """
+    from .config import MAX_DB_SIZE_MB
+    size = get_file_size_bytes(adb, db_path, root=root)
+    if size > 0 and size > MAX_DB_SIZE_MB * 1024 * 1024:
+        return False
+
     tmp = "/sdcard/_psf_tmp.db"
     adb.shell(f"cp {shq(db_path)} {tmp} 2>/dev/null", root=root)
     adb.shell(f"chmod 644 {tmp} 2>/dev/null", root=root)

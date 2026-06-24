@@ -327,6 +327,45 @@ def _edit_field(cfg: Dict[str, Any], key: str, label: str, kind: str, choices) -
 
 
 # ─────────────────────────────────────────────────────────────
+# Theme-Auswahl (Option 4)
+# ─────────────────────────────────────────────────────────────
+
+_THEMES = ["dark", "light", "custom"]
+_THEME_DESC = {
+    "dark":   "Dunkles Terminal  (Standard – Cyan/Grün auf Schwarz)",
+    "light":  "Helles Terminal   (Dunkel auf Weiß)",
+    "custom": "Custom            (Farben manuell konfigurierbar)",
+}
+
+def show_theme(adb=None) -> None:
+    """Direkter Theme-Wähler für Menüpunkt 4."""
+    cfg = _load()
+    while True:
+        ui.clear()
+        ui.banner(subtitle="🎨 UI THEME")
+        print()
+        ui.rule("THEME AUSWÄHLEN", ui.CYAN)
+        print()
+        current = cfg.get("theme", "dark")
+        for i, t in enumerate(_THEMES, 1):
+            mark = f"{ui.BGREEN}●{ui.RESET}" if t == current else f"{ui.GREY}○{ui.RESET}"
+            print(f"  {mark} {i})  {ui.BOLD}{t:<8}{ui.RESET}  {ui.GREY}{_THEME_DESC[t]}{ui.RESET}")
+        print()
+        ui.rule(color=ui.CYAN)
+        print(f"  {ui.GREY}  0  Zurück    q  Beenden{ui.RESET}")
+        print()
+        raw = input(f"  {ui.BOLD}☠ ❯ Theme (1-{len(_THEMES)}, 0): {ui.RESET}").strip().lower()
+        if raw in ("0", "back", "q", "quit"):
+            return
+        try:
+            cfg["theme"] = _THEMES[int(raw) - 1]
+            _save(cfg)
+            ui.ok(f"Theme auf '{cfg['theme']}' gesetzt.")
+        except (ValueError, IndexError):
+            ui.warn("Ungültige Auswahl.")
+
+
+# ─────────────────────────────────────────────────────────────
 # Haupt-Einstellungs-Menü
 # ─────────────────────────────────────────────────────────────
 

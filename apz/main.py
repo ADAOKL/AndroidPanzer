@@ -270,7 +270,7 @@ def _numeric_main_menu(adb: ADB, dev: Device, st: dict, data: dict) -> None:
                 _categories_overview(adb, dev, st)
             elif choice_lower == "4":
                 _bar("🎨 UI THEME", _s("4"))
-                settings_manager.show_settings(adb)
+                settings_manager.show_theme(adb)
             elif choice_lower == "5":
                 _bar("⚙️  EINSTELLUNGEN", _s("5"))
                 settings_manager.show_settings(adb)

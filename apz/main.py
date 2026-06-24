@@ -701,8 +701,6 @@ def _main_menu_OLD(adb: ADB, dev: Device, st: dict, data: dict) -> None:
 
 
 def run() -> int:
-    # Auto-Mode: kein y/ENTER/Passwort nötig
-    ui.set_auto(True)
     # 🎨 MODERN STARTUP SCREEN + vollständiger 54-Modul-Scan
     _startup_failures = modern_startup.animate_startup()
     if _startup_failures:

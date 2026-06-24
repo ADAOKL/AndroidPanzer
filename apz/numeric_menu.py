@@ -4,7 +4,29 @@ Alle Tools nur mit Nummern (1-30). Kein Alphabet, keine Sonderzeichen.
 """
 from __future__ import annotations
 
+import unicodedata
+
 from . import ui
+
+
+def _dispw(s: str) -> int:
+    """Visuelle Terminal-Breite eines Strings (Wide-Emoji = 2, VS/Combining = 0)."""
+    w = 0
+    for c in s:
+        cp = ord(c)
+        if 0xFE00 <= cp <= 0xFE0F or unicodedata.category(c) in ('Mn', 'Me', 'Cf'):
+            continue  # Variation Selectors + Combining: unsichtbar
+        eaw = unicodedata.east_asian_width(c)
+        if eaw in ('W', 'F') or cp >= 0x1F000:
+            w += 2
+        else:
+            w += 1
+    return w
+
+
+def _ljust(s: str, width: int) -> str:
+    """Wie str.ljust(), aber basierend auf visueller Terminal-Breite."""
+    return s + ' ' * max(0, width - _dispw(s))
 
 
 class NumericMainMenu:
@@ -113,91 +135,91 @@ class NumericMainMenu:
         print(f"{ui.BGREEN}{'TIER 1: BASIS-ANALYSE':^80}{ui.RESET}")
         print()
         for num, icon, desc, key in self.MENU_ITEMS[0:5]:
-            print(f"  {ui.BOLD}{num:2d}{ui.RESET}  {icon:30}  {desc}")
+            print(f"  {ui.BOLD}{num:2d}{ui.RESET}  {_ljust(icon, 30)}  {desc}")
         print()
 
         # Gruppe 2
         print(f"{ui.BCYAN}{'TIER 2: AUDIO & VIDEO & NETZWERK':^80}{ui.RESET}")
         print()
         for num, icon, desc, key in self.MENU_ITEMS[5:8]:
-            print(f"  {ui.BOLD}{num:2d}{ui.RESET}  {icon:30}  {desc}")
+            print(f"  {ui.BOLD}{num:2d}{ui.RESET}  {_ljust(icon, 30)}  {desc}")
         print()
 
         # Gruppe 3
         print(f"{ui.BYELLOW}{'TIER 3: FORENSIK & SCANNING':^80}{ui.RESET}")
         print()
         for num, icon, desc, key in self.MENU_ITEMS[8:13]:
-            print(f"  {ui.BOLD}{num:2d}{ui.RESET}  {icon:30}  {desc}")
+            print(f"  {ui.BOLD}{num:2d}{ui.RESET}  {_ljust(icon, 30)}  {desc}")
         print()
 
         # Gruppe 4
         print(f"{ui.BMAGENTA}{'TIER 4: ERWEITERTE TOOLS':^80}{ui.RESET}")
         print()
         for num, icon, desc, key in self.MENU_ITEMS[13:18]:
-            print(f"  {ui.BOLD}{num:2d}{ui.RESET}  {icon:30}  {desc}")
+            print(f"  {ui.BOLD}{num:2d}{ui.RESET}  {_ljust(icon, 30)}  {desc}")
         print()
 
         # Gruppe 5
         print(f"{ui.BRED}{'TIER 5: SPECIALS & ADVANCED':^80}{ui.RESET}")
         print()
         for num, icon, desc, key in self.MENU_ITEMS[18:24]:
-            print(f"  {ui.BOLD}{num:2d}{ui.RESET}  {icon:30}  {desc}")
+            print(f"  {ui.BOLD}{num:2d}{ui.RESET}  {_ljust(icon, 30)}  {desc}")
         print()
 
         # Gruppe 6
         print(f"{ui.BGREEN}{'TIER 6: SECURITY & INTELLIGENCE':^80}{ui.RESET}")
         print()
         for num, icon, desc, key in self.MENU_ITEMS[24:30]:
-            print(f"  {ui.BOLD}{num:2d}{ui.RESET}  {icon:30}  {desc}")
+            print(f"  {ui.BOLD}{num:2d}{ui.RESET}  {_ljust(icon, 30)}  {desc}")
         print()
 
         # Gruppe 7
         print(f"{ui.BCYAN}{'TIER 7: NEW ADVANCED FEATURES':^80}{ui.RESET}")
         print()
         for num, icon, desc, key in self.MENU_ITEMS[30:33]:
-            print(f"  {ui.BOLD}{num:2d}{ui.RESET}  {icon:30}  {desc}")
+            print(f"  {ui.BOLD}{num:2d}{ui.RESET}  {_ljust(icon, 30)}  {desc}")
         print()
 
         # Gruppe 8
         print(f"{ui.BMAGENTA}{'TIER 8: FORENSIC & SECURITY ADVANCED':^80}{ui.RESET}")
         print()
         for num, icon, desc, key in self.MENU_ITEMS[33:40]:
-            print(f"  {ui.BOLD}{num:2d}{ui.RESET}  {icon:30}  {desc}")
+            print(f"  {ui.BOLD}{num:2d}{ui.RESET}  {_ljust(icon, 30)}  {desc}")
         print()
 
         # Gruppe 9
         print(f"{ui.BGREEN}{'TIER 9: KLASSISCHE TOOLS (aus alter Version)':^80}{ui.RESET}")
         print()
         for num, icon, desc, key in self.MENU_ITEMS[40:54]:
-            print(f"  {ui.BOLD}{num:2d}{ui.RESET}  {icon:30}  {desc}")
+            print(f"  {ui.BOLD}{num:2d}{ui.RESET}  {_ljust(icon, 30)}  {desc}")
         print()
 
         # Gruppe 10: SIM-Toolkit
         print(f"{ui.BCYAN}{'TIER 10: SIM-KARTEN TOOLKIT':^80}{ui.RESET}")
         print()
         for num, icon, desc, key in self.MENU_ITEMS[54:55]:
-            print(f"  {ui.BOLD}{num:2d}{ui.RESET}  {icon:30}  {desc}")
+            print(f"  {ui.BOLD}{num:2d}{ui.RESET}  {_ljust(icon, 30)}  {desc}")
         print()
 
         # Gruppe 11: App-Domain Monitor
         print(f"{ui.BGREEN}{'TIER 11: APP-DOMAIN MONITOR':^80}{ui.RESET}")
         print()
         for num, icon, desc, key in self.MENU_ITEMS[55:56]:
-            print(f"  {ui.BOLD}{num:2d}{ui.RESET}  {icon:30}  {desc}")
+            print(f"  {ui.BOLD}{num:2d}{ui.RESET}  {_ljust(icon, 30)}  {desc}")
         print()
 
         # Gruppe 12: Play Store Forensics
         print(f"{ui.BGREEN}{'TIER 12: PLAY STORE FORENSICS':^80}{ui.RESET}")
         print()
         for num, icon, desc, key in self.MENU_ITEMS[56:57]:
-            print(f"  {ui.BOLD}{num:2d}{ui.RESET}  {icon:30}  {desc}")
+            print(f"  {ui.BOLD}{num:2d}{ui.RESET}  {_ljust(icon, 30)}  {desc}")
         print()
 
         # Gruppe 13: Neue Forensik-Module
         print(f"{ui.BMAGENTA}{'TIER 13: NEUE FORENSIK-MODULE':^80}{ui.RESET}")
         print()
         for num, icon, desc, key in self.MENU_ITEMS[57:]:
-            print(f"  {ui.BOLD}{num:2d}{ui.RESET}  {icon:30}  {desc}")
+            print(f"  {ui.BOLD}{num:2d}{ui.RESET}  {_ljust(icon, 30)}  {desc}")
         print()
 
         print(f"{ui.BGREEN}{'='*80}{ui.RESET}")

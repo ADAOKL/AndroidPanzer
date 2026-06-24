@@ -84,6 +84,7 @@ _MODULE_REGISTRY: list[tuple[int, str, str, str]] = [
     (54, "🔒 FRP-SCANNER",          "frp_scanner",              "menu"),
     (55, "💳 SIM-TOOLKIT",          "sim_toolkit",              "menu"),
     (56, "🌐 APP-DOMAIN MONITOR",   "app_traffic_monitor",      "menu"),
+    (57, "🕵️  PLAY STORE FORENSICS", "playstore_forensics.main", "menu"),
 ]
 
 
@@ -145,6 +146,7 @@ _MODULE_DEPS: dict[str, dict] = {
     "numeric_menu":             {"bins": [],                         "pips": []},
     "sim_toolkit":              {"bins": ["adb"],                    "pips": []},
     "app_traffic_monitor":      {"bins": ["adb"],                    "pips": []},
+    "playstore_forensics.main": {"bins": ["adb"],                    "pips": []},
 }
 
 
@@ -170,11 +172,16 @@ def _check_module(module_name: str, func_name: str) -> tuple[bool, str, list[str
     ok=False nur bei Import-Fehler oder fehlender Funktion (KRITISCH).
     Fehlende Tools = Warnung, kein Fehler (Module können trotzdem laufen).
     """
-    # 1. Import-Test
+    # 1. Import-Test (relativ zu apz, Fallback auf absoluten Import)
     try:
         mod = importlib.import_module(f".{module_name}", package="apz")
-    except ImportError as e:
-        return False, f"Import-Fehler: {e}", [], []
+    except ImportError:
+        try:
+            mod = importlib.import_module(module_name)
+        except ImportError as e:
+            return False, f"Import-Fehler: {e}", [], []
+        except Exception as e:  # noqa: BLE001
+            return False, f"Fehler: {e}", [], []
     except Exception as e:  # noqa: BLE001
         return False, f"Fehler: {e}", [], []
 

@@ -71,7 +71,7 @@ class ProfileManager:
             print(f"    {ui.BOLD}Q{ui.RESET}    Zurück")
             print()
 
-            choice = input(f"  {ui.BOLD}☠ ❯ Auswahl (1-{len(profile_list)}, N/E/D, Q): {ui.RESET}").strip().upper()
+            choice = ui.ask(f"Auswahl (1-{len(profile_list)}, N/E/D, Q)", "Q").upper()
 
             # Handle numeric selection
             try:
@@ -170,7 +170,7 @@ class ProfileManager:
         print(f"    {ui.BOLD}Q{ui.RESET}  Zurück")
         print()
 
-        return input(f"  {ui.BOLD}☠ ❯ Option (1-7, Q): {ui.RESET}").strip().upper()
+        return ui.ask("Option (1-7, Q)", "Q").upper()
 
     def _create_new_profile(self) -> Optional[str]:
         """Erstelle neues Profil (Platzhalter)."""

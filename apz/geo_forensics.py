@@ -28,7 +28,7 @@ def menu(adb=None, dev=None, st: dict | None = None) -> None:
         print()
         print("  [0] Zurück")
         print()
-        choice = input(f"{ui.PROMPT} Auswahl: ").strip()
+        choice = ui.ask("Auswahl", "0")
 
         if choice == "0":
             return

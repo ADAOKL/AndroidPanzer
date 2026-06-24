@@ -453,7 +453,7 @@ class AutoRootEngine:
             print(f"    {i}. {backup.backup_id} ({backup.size_mb:.1f}MB)")
 
         try:
-            choice = int(input("\n  Backup wählen: "))
+            choice = int(ui.ask("Backup wählen", "1"))
             if 1 <= choice <= len(self.backups):
                 backup = self.backups[choice - 1]
                 success, msg = self.restore_data(backup.backup_id)
@@ -501,7 +501,7 @@ class AutoRootEngine:
         ui.rule("🛠️  ADB SHELL INTEGRATION", ui.BCYAN)
         print()
         print("  Führe direkte Shell-Befehle aus:")
-        cmd = input("  Befehl: ").strip()
+        cmd = ui.ask("Befehl", "").strip()
 
         if cmd:
             result = self.adb.shell(cmd)

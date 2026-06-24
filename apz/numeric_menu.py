@@ -156,7 +156,7 @@ class NumericMainMenu:
         print(f"  {ui.GREY}  0  Zurück / Gerät wechseln     Q  Beenden     A  Auto-Modus [{auto_badge}{ui.GREY}]{ui.RESET}")
         print()
 
-        choice = input(f"  {ui.BOLD}☠ ❯ Auswahl (0-60, Q, A): {ui.RESET}").strip().upper()
+        choice = ui.ask("Auswahl (0-60, Q, A)", "Q").upper()
         return choice
 
     def get_handler(self, choice: str) -> str:

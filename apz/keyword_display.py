@@ -146,7 +146,7 @@ class KeywordDisplay:
             print()
 
         print()
-        choice = input(f"  {ui.BOLD}☠ ❯ Keyword-Nummer (1-{len(keywords)}, Q=zurück): {ui.RESET}").strip()
+        choice = ui.ask(f"Keyword-Nummer (1-{len(keywords)}, Q=zurück)", "Q")
 
         if choice.upper() == "Q":
             return None
@@ -184,8 +184,7 @@ class KeywordDisplay:
         print()
         print(f"{ui.BGREEN}{'═' * 80}{ui.RESET}\n")
 
-        answer = input(f"  {ui.BOLD}☠ ❯ Aufzeichnung starten? (j/N): {ui.RESET}").strip().upper()
-        return answer == "J"
+        return ui.confirm("Aufzeichnung starten?", False)
 
     @staticmethod
     def show_recording_progress(

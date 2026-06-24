@@ -803,7 +803,7 @@ def menu(adb: ADB, dev=None, st: dict | None = None) -> None:
             print()
 
         print(f"  [{'0':>2}] Zurück\n")
-        choice = input("  Auswahl: ").strip()
+        choice = ui.ask("Auswahl", "0")
 
         if choice in ("0", "q", "Q", "back", "exit"):
             break

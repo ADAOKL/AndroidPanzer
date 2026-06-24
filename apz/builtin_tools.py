@@ -186,7 +186,7 @@ def show_sqlite_db(db_path: str) -> None:
     for i, t in enumerate(tables, 1):
         print(f"  {i:2d}  {t}")
     print()
-    ch = input("  Tabelle (Nr): ").strip()
+    ch = ui.ask("Tabelle (Nr)", "1")
     try:
         tbl = tables[int(ch) - 1]
     except (ValueError, IndexError):

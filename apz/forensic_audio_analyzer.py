@@ -272,7 +272,7 @@ class ForensicAudioAnalyzer:
         ui.rule("🎙️ START AUDIO ANALYSIS", ui.BCYAN)
         print()
 
-        duration = int(input("  Analysedauer in Sekunden [60]: ") or "60")
+        duration = int(ui.ask("Analysedauer in Sekunden", "60") or "60")
 
         print(f"\n  Analysiere {duration}s Audio...")
         time.sleep(1)

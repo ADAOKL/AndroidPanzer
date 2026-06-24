@@ -108,7 +108,7 @@ class NetworkAnalyzer:
                         ("7", "⚡ Netzwerk-Speed Test"),
                         ("8", "📊 Netzwerk-Statistiken"),
                         ("9", "🔒 Netzwerk-Sicherheit"),
-                        ("0", "📋 Netzwerk-Übersicht (All-in-One)"),
+                        ("A", "📋 Netzwerk-Übersicht (All-in-One)"),
                     ]
 
                     ch = ui.menu("Netzwerk-Analyse Optionen", entries, back_label="Hauptmenü")
@@ -134,7 +134,7 @@ class NetworkAnalyzer:
                             self.show_network_stats()
                         elif ch == "9":
                             self.network_security_check()
-                        elif ch == "0":
+                        elif ch in ("A", "a"):
                             self.show_complete_overview()
                         else:
                             ui.warn("Ungültige Option")
@@ -290,23 +290,17 @@ class NetworkAnalyzer:
         print()
 
         try:
-            # WiFi-Info
-            wifi_info = self.adb.shell("dumpsys wifi")
-
-            lines = wifi_info.split("\n")
-            for line in lines:
-                if "SSID:" in line:
-                    ssid = line.split(":")[-1].strip()
-                    ui.kv("SSID", ssid)
-                elif "BSSID:" in line:
-                    bssid = line.split(":")[-1].strip()
-                    ui.kv("BSSID (MAC)", bssid)
-                elif "LinkSpeed:" in line:
-                    speed = line.split(":")[-1].strip()
-                    ui.kv("Link Speed", speed)
-                elif "RSSI:" in line:
-                    rssi = line.split(":")[-1].strip()
-                    ui.kv("Signal (dBm)", rssi)
+            # WiFi-Info – nur mWifiInfo-Zeile auswerten (vermeidet false positives)
+            wifi_info = self.adb.shell("dumpsys wifi | grep -E 'mWifiInfo|extra SSID' | head -5")
+            import re as _re
+            ssid_m  = _re.search(r'SSID:\s*"?([^,"\n]+)"?', wifi_info)
+            bssid_m = _re.search(r'BSSID:\s*([\da-fA-F:]{17})', wifi_info)
+            speed_m = _re.search(r'Link speed:\s*(\S+)', wifi_info)
+            rssi_m  = _re.search(r'RSSI:\s*(-?\d+)', wifi_info)
+            ui.kv("SSID",       ssid_m.group(1).strip()  if ssid_m  else "—")
+            ui.kv("BSSID (MAC)", bssid_m.group(1)        if bssid_m else "—")
+            ui.kv("Link Speed",  speed_m.group(1)         if speed_m else "—")
+            ui.kv("Signal (dBm)", rssi_m.group(1)         if rssi_m  else "—")
 
             # IP-Adresse
             ip_info = self.adb.shell("getprop dhcp.wlan0.ipaddress")

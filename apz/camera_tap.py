@@ -337,12 +337,6 @@ class CameraTap:
 
     def show_camera_menu(self) -> None:
         """Zeigt Kamera-TAP Menü."""
-        # 🔐 PASSWORD-SCHUTZ ERZWINGEN
-        if not self.password_protection.require_auth():
-            ui.err("❌ Authentifizierung erforderlich!")
-            time.sleep(2)
-            return
-
         # PRÜFE GERÄT ZUERST
         if not self.adb or not hasattr(self.adb, 'shell'):
             ui.clear()

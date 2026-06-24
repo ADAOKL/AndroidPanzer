@@ -152,10 +152,11 @@ class NumericMainMenu:
             print()
 
         ui.rule(color=ui.CYAN)
-        print(f"  {ui.GREY}  0  Zurück / Gerät wechseln     Q  Beenden{ui.RESET}")
+        auto_badge = f"{ui.BGREEN}● AUTO AN{ui.RESET}" if ui.is_auto() else f"{ui.GREY}○ AUTO AUS{ui.RESET}"
+        print(f"  {ui.GREY}  0  Zurück / Gerät wechseln     Q  Beenden     A  Auto-Modus [{auto_badge}{ui.GREY}]{ui.RESET}")
         print()
 
-        choice = input(f"  {ui.BOLD}☠ ❯ Auswahl (0-60, Q): {ui.RESET}").strip().upper()
+        choice = input(f"  {ui.BOLD}☠ ❯ Auswahl (0-60, Q, A): {ui.RESET}").strip().upper()
         return choice
 
     def get_handler(self, choice: str) -> str:

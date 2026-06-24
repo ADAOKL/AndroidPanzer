@@ -47,7 +47,11 @@ def require_authorization() -> bool:
     print("   [4] Interner BYOD-Firmen-Audit (Policy liegt vor)")
     print("   [0] Abbrechen (kein Zugriff)\n")
 
-    choice = input("  Ihr Szenario [0-4]: ").strip()
+    if ui.is_auto():
+        choice = "1"
+        print(f"  Ihr Szenario [0-4]:  {ui.GREY}[AUTO → 1 Eigenes Gerät]{ui.RESET}")
+    else:
+        choice = input("  Ihr Szenario [0-4]: ").strip()
     if choice not in ("1", "2", "3", "4"):
         print(f"\n  {ui.RED}Abgebrochen – kein Zugriff gewährt.{ui.RESET}\n")
         return False

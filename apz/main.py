@@ -241,6 +241,12 @@ def _numeric_main_menu(adb: ADB, dev: Device, st: dict, data: dict) -> None:
                 return
             if choice == "0":
                 return
+            if choice == "A":
+                ui.set_auto(not ui.is_auto())
+                status = f"{ui.BGREEN}AKTIV{ui.RESET}" if ui.is_auto() else f"{ui.GREY}DEAKTIVIERT{ui.RESET}"
+                ui.ok(f"Auto-Modus {status}  (kein y/ENTER nötig)")
+                time.sleep(1)
+                continue
 
             # Map numbers to handlers
             choice_lower = choice.lower()
@@ -695,6 +701,8 @@ def _main_menu_OLD(adb: ADB, dev: Device, st: dict, data: dict) -> None:
 
 
 def run() -> int:
+    # Auto-Mode: kein y/ENTER/Passwort nötig
+    ui.set_auto(True)
     # 🎨 MODERN STARTUP SCREEN + vollständiger 54-Modul-Scan
     _startup_failures = modern_startup.animate_startup()
     if _startup_failures:

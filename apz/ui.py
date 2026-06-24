@@ -12,6 +12,16 @@ import sys
 # --- Farb-Erkennung -------------------------------------------------------
 _NO_COLOR = bool(os.environ.get("NO_COLOR")) or not sys.stdout.isatty()
 
+# --- Auto-Modus (kein y/ENTER nötig) ------------------------------------
+_AUTO_MODE: bool = bool(os.environ.get("PANZER_AUTO"))
+
+def set_auto(enabled: bool) -> None:
+    global _AUTO_MODE
+    _AUTO_MODE = enabled
+
+def is_auto() -> bool:
+    return _AUTO_MODE
+
 
 def _c(code: str) -> str:
     return "" if _NO_COLOR else code
@@ -157,6 +167,10 @@ def badge(kind: str) -> str:
 
 # --- Eingabe --------------------------------------------------------------
 def ask(prompt: str, default: str = "") -> str:
+    if _AUTO_MODE:
+        sfx = f" {GREY}[{default}]{RESET}" if default else ""
+        print(f"{BOLD}{NEON}☠ ❯{RESET} {prompt}{sfx}:  {GREY}[AUTO]{RESET}")
+        return default
     sfx = f" {GREY}[{default}]{RESET}" if default else ""
     try:
         v = input(f"{BOLD}{NEON}☠ ❯{RESET} {prompt}{sfx}: ").strip()
@@ -166,6 +180,10 @@ def ask(prompt: str, default: str = "") -> str:
 
 
 def confirm(prompt: str, default: bool = False) -> bool:
+    if _AUTO_MODE:
+        label = "J" if default else "N"
+        print(f"{BOLD}{NEON}☠ ❯{RESET} {prompt}  {GREY}[AUTO → {label}]{RESET}")
+        return default
     try:
         from . import lang as _lang
         d = _lang.t("ui_yes_no_true") if default else _lang.t("ui_yes_no_false")
@@ -180,6 +198,8 @@ def confirm(prompt: str, default: bool = False) -> bool:
 
 
 def pause(msg: str = "") -> None:
+    if _AUTO_MODE:
+        return
     if not msg:
         try:
             from . import lang as _lang
@@ -202,9 +222,8 @@ def pager(text: str, title: str = "") -> None:
     except Exception:  # noqa: BLE001
         _no_out = "(keine Ausgabe)"
     lines = text.splitlines() or [_no_out]
-    # Ohne interaktives TTY (Pipe/Test/Redirect): alles am Stück ausgeben – kein
-    # input() (das würde blockieren bzw. OSError werfen, z.B. unter pytest).
-    if _NO_COLOR or not sys.stdin.isatty():
+    # Auto-Mode oder kein TTY: alles ohne Pause ausgeben
+    if _AUTO_MODE or _NO_COLOR or not sys.stdin.isatty():
         print("\n".join(lines))
         return
     h = max(10, shutil.get_terminal_size((100, 30)).lines - 4)

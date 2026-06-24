@@ -5,15 +5,24 @@ geprüft. Fehler blinken rot. Beides wird bei jedem Start automatisch ausgeführ
 """
 from __future__ import annotations
 
+import hashlib
 import importlib
 import importlib.util
+import json
+import os
 import shutil
 import subprocess
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 from . import ui
 from . import enhanced_startup
+
+
+_CACHE_FILE = os.path.expanduser("~/.cache/androidpanzer/module_scan.json")
+_CACHE_MAX_AGE_S = 3600 * 8  # 8 Stunden
 
 
 # ─── Modul-Registry: (nr, anzeigename, apz-module, funktion) ──────────────────
@@ -85,6 +94,10 @@ _MODULE_REGISTRY: list[tuple[int, str, str, str]] = [
     (55, "💳 SIM-TOOLKIT",          "sim_toolkit",              "menu"),
     (56, "🌐 APP-DOMAIN MONITOR",   "app_traffic_monitor",      "menu"),
     (57, "🕵️  PLAY STORE FORENSICS", "playstore_forensics.main", "menu"),
+    # Tier 13: Neue Module
+    (58, "🔐 VERSCHLÜSSELUNGS-SCANNER", "encryption_scanner",      "menu"),
+    (59, "📍 GEO-FORENSIK",             "geo_forensics",            "menu"),
+    (60, "🧬 SENSOR-FORENSIK",          "sensor_forensics",         "menu"),
 ]
 
 
@@ -147,7 +160,46 @@ _MODULE_DEPS: dict[str, dict] = {
     "sim_toolkit":              {"bins": ["adb"],                    "pips": []},
     "app_traffic_monitor":      {"bins": ["adb"],                    "pips": []},
     "playstore_forensics.main": {"bins": ["adb"],                    "pips": []},
+    "encryption_scanner":       {"bins": ["adb"],                    "pips": []},
+    "geo_forensics":            {"bins": ["adb"],                    "pips": []},
+    "sensor_forensics":         {"bins": ["adb"],                    "pips": []},
 }
+
+
+def _get_cache_key() -> str:
+    apz_dir = os.path.dirname(__file__)
+    h = hashlib.md5()
+    for fname in sorted(os.listdir(apz_dir)):
+        if fname.endswith(".py"):
+            try:
+                h.update(str(os.path.getmtime(os.path.join(apz_dir, fname))).encode())
+            except OSError:
+                pass
+    return h.hexdigest()
+
+
+def _load_scan_cache() -> list | None:
+    try:
+        if not os.path.exists(_CACHE_FILE):
+            return None
+        with open(_CACHE_FILE) as f:
+            data = json.load(f)
+        if time.time() - data.get("ts", 0) > _CACHE_MAX_AGE_S:
+            return None
+        if data.get("key") != _get_cache_key():
+            return None
+        return data.get("failures", [])
+    except Exception:
+        return None
+
+
+def _save_scan_cache(failures: list) -> None:
+    try:
+        os.makedirs(os.path.dirname(_CACHE_FILE), exist_ok=True)
+        with open(_CACHE_FILE, "w") as f:
+            json.dump({"ts": time.time(), "key": _get_cache_key(), "failures": [list(x) for x in failures]}, f)
+    except Exception:
+        pass
 
 
 def _check_bin(name: str) -> bool:
@@ -257,7 +309,7 @@ def _blink_warnings(warnings: list[tuple[int, str, list, list]]) -> None:
 # ─── Haupt-Scan ───────────────────────────────────────────────────────────────
 
 def scan_all_modules() -> list[tuple[int, str, str]]:
-    """ECHTER Scan aller 54 Module: Import + Funktion + externe Abhängigkeiten.
+    """ECHTER Scan aller 60 Module: Import + Funktion + externe Abhängigkeiten.
 
     Jedes Modul läuft 0% → 100% (3 Phasen).
     Herzschlag-Puls an der Prozentzahl wenn Fehler/Warnung gefunden.
@@ -288,7 +340,7 @@ def scan_all_modules() -> list[tuple[int, str, str]]:
                 f"{ui.CYAN}│{bar}│{ui.RESET} {step:5.1f}%  {ui.GREY}Import…{ui.RESET}   "
             )
             sys.stdout.flush()
-            time.sleep(0.006)
+            time.sleep(0.002)
 
         ok, err_txt, missing_bins, missing_pips = _check_module(module, func)
 
@@ -301,7 +353,7 @@ def scan_all_modules() -> list[tuple[int, str, str]]:
                 f"{ui.CYAN}│{bar}│{ui.RESET} {step:5.1f}%  {ui.GREY}Funktion…{ui.RESET} "
             )
             sys.stdout.flush()
-            time.sleep(0.006)
+            time.sleep(0.002)
 
         # ── Phase 3: Deps (70% → 100%) ─────────────────────────────────────────
         for step in range(70, 101, 6):
@@ -312,7 +364,7 @@ def scan_all_modules() -> list[tuple[int, str, str]]:
                 f"{ui.CYAN}│{bar}│{ui.RESET} {step:5.1f}%  {ui.GREY}Deps…{ui.RESET}     "
             )
             sys.stdout.flush()
-            time.sleep(0.006)
+            time.sleep(0.002)
 
         # ── Ergebnis + Herzschlag-Puls ─────────────────────────────────────────
         if not ok:
@@ -562,29 +614,23 @@ def show_startup_complete(failures: list | None = None) -> None:
     print("  ║                                                        ║")
     print("  ╚════════════════════════════════════════════════════════╝")
     print(f"{ui.RESET}\n")
-    time.sleep(0.8)
+    time.sleep(0.2)
 
 
 # ─── Haupt-Startup-Sequenz ────────────────────────────────────────────────────
 
 def _auto_pip_preflight_bg() -> None:
-    """Stellt sicher, dass alle pip-Pakete in ~/panzer_venv vorhanden sind.
-
-    Läuft nach dem Modul-Scan (non-blocking, ohne Benutzerdialog).
-    Fehlende Pakete werden automatisch installiert.
-    """
-    try:
-        from . import labsetup
-        import os
-        venv_path = os.path.expanduser("~/panzer_venv")
-        # Nur ausführen wenn venv schon existiert (nicht beim allerersten Start blockieren)
-        venv_python = os.path.join(venv_path, "bin", "python3")
-        if not os.path.isfile(venv_python):
-            return  # venv fehlt → Nutzer muss erst venv einrichten (Menü 49)
-        # Leise im Hintergrund prüfen und ggf. installieren
-        labsetup.auto_pip_preflight(quiet=True)
-    except Exception:  # noqa: BLE001
-        pass  # niemals den Startup blockieren
+    """Startet pip-Preflight asynchron in einem Daemon-Thread."""
+    def _bg() -> None:
+        try:
+            from . import labsetup
+            venv_python = os.path.join(os.path.expanduser("~/panzer_venv"), "bin", "python3")
+            if not os.path.isfile(venv_python):
+                return
+            labsetup.auto_pip_preflight(quiet=True)
+        except Exception:  # noqa: BLE001
+            pass
+    threading.Thread(target=_bg, daemon=True, name="panzer-pip-preflight").start()
 
 
 def animate_startup() -> list[tuple[int, str, str]]:
@@ -602,7 +648,6 @@ def animate_startup() -> list[tuple[int, str, str]]:
     show_startup_complete(failures)
     show_feature_highlight()
     show_version_info()
-    time.sleep(0.5)
     _auto_pip_preflight_bg()
     return failures
 
@@ -657,6 +702,115 @@ def show_main_menu_modern(device_brand: str = "", device_model: str = "") -> Non
 
 def show_enhanced_startup_system() -> None:
     enhanced_startup.show_enhanced_startup_sequence()
+
+
+def show_boot_device_analysis(adb, data: dict, st: dict) -> None:
+    """Live-Gerätedaten-Analyse bei jedem Bootvorgang – echte Daten, kein Cache."""
+    ui.clear()
+    brand   = data.get("brand", "")
+    model   = data.get("model", "")
+    android = data.get("android_version", "") or data.get("version", "")
+    serial  = data.get("serial", "")
+    is_root = bool(st.get("is_root"))
+
+    print(f"\n{ui.BCYAN}{'━'*78}{ui.RESET}")
+    print(f"  {ui.BOLD}{ui.BGREEN}🔄 BOOT-ANALYSE – GERÄTE-SICHERHEITSSTATUS{ui.RESET}  {ui.GREY}(Echtzeit, kein Cache){ui.RESET}")
+    print(f"{ui.BCYAN}{'━'*78}{ui.RESET}\n")
+
+    # Gerät
+    print(f"  {ui.BOLD}📱 Gerät{ui.RESET}")
+    print(f"     Modell      : {brand} {model}  ({serial})")
+    print(f"     Android     : {android or '—'}")
+    root_icon = f"{ui.BGREEN}✅ ROOT AKTIV{ui.RESET}" if is_root else f"{ui.GREY}○ kein Root{ui.RESET}"
+    print(f"     Zugriff     : {root_icon}\n")
+
+    # Live ADB-Checks – parallel für schnellere Anzeige
+    risk_count = 0
+    print(f"  {ui.BOLD}🔐 Sicherheits-Schnellcheck{ui.RESET}")
+
+    def _chk(cmd: str, timeout: int = 6) -> str:
+        try:
+            return adb.shell(cmd, timeout=timeout).strip()
+        except Exception:
+            return "—"
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        f_selinux = pool.submit(_chk, "getenforce 2>/dev/null", 6)
+        f_enc     = pool.submit(lambda: adb.getprop("ro.crypto.state") or "—")
+        f_bl      = pool.submit(lambda: adb.getprop("ro.boot.verifiedbootstate") or adb.getprop("ro.boot.flash.locked") or "—")
+        f_cas     = pool.submit(_chk, "ls /data/misc/user/0/cacerts-added/ 2>/dev/null | wc -l", 6)
+        f_vpn     = pool.submit(_chk, "ip link show 2>/dev/null | grep -cE 'tun|ppp|wg'", 6)
+        f_usb     = pool.submit(_chk, "settings get global adb_enabled 2>/dev/null", 5)
+
+        selinux  = f_selinux.result()
+        enc      = f_enc.result()
+        bl       = f_bl.result()
+        user_cas = f_cas.result()
+        vpn      = f_vpn.result()
+        usb_dbg  = f_usb.result()
+
+    sel_icon = f"{ui.BGREEN}🟢 Enforcing{ui.RESET}" if selinux.lower() == "enforcing" \
+               else f"{ui.BRED}🔴 {selinux or '—'}{ui.RESET}"
+    if selinux.lower() != "enforcing":
+        risk_count += 1
+    print(f"     SELinux          : {sel_icon}")
+
+    enc_icon = f"{ui.BGREEN}🔒 {enc}{ui.RESET}" if enc == "encrypted" \
+               else f"{ui.BRED}🔓 {enc}{ui.RESET}"
+    if enc != "encrypted":
+        risk_count += 1
+    print(f"     Verschlüsselung  : {enc_icon}")
+
+    bl_icon = f"{ui.BGREEN}🔒 {bl}{ui.RESET}" if bl in ("green", "1", "locked") \
+              else f"{ui.BYELLOW}⚠  {bl}{ui.RESET}"
+    print(f"     Bootloader       : {bl_icon}")
+
+    try:
+        ca_n = int(user_cas)
+    except (ValueError, TypeError):
+        ca_n = 0
+    ca_icon = f"{ui.BRED}⚠  {ca_n} User-CA(s) – MITM-Risiko!{ui.RESET}" if ca_n > 0 \
+              else f"{ui.BGREEN}✅ keine User-CAs{ui.RESET}"
+    if ca_n > 0:
+        risk_count += 1
+    print(f"     Zertifikate      : {ca_icon}")
+
+    try:
+        vpn_n = int(vpn)
+    except (ValueError, TypeError):
+        vpn_n = 0
+    vpn_icon = f"{ui.BYELLOW}⚠  {vpn_n} aktive Tunnel{ui.RESET}" if vpn_n > 0 \
+               else f"{ui.BGREEN}✅ kein VPN{ui.RESET}"
+    print(f"     VPN-Tunnel       : {vpn_icon}")
+
+    dbg_icon = f"{ui.BYELLOW}⚠  USB-Debug aktiv{ui.RESET}" if usb_dbg == "1" \
+               else f"{ui.BGREEN}✅ USB-Debug aus{ui.RESET}"
+    print(f"     USB-Debugging    : {dbg_icon}")
+
+    apps = data.get("app_count") or data.get("user_apps")
+    if not apps:
+        apps_raw = adb.shell("pm list packages -3 2>/dev/null | wc -l", timeout=8).strip()
+        try:
+            apps = int(apps_raw)
+        except (ValueError, TypeError):
+            apps = "—"
+    print(f"     Drittanbieter-Apps: {apps}")
+
+    battery = data.get("battery") or data.get("battery_level")
+    if not battery:
+        bat_raw = adb.shell("dumpsys battery 2>/dev/null | grep 'level:' | head -1", timeout=5).strip()
+        battery = bat_raw.replace("level:", "").strip() + "%" if bat_raw else "—"
+    print(f"     Akku             : {battery}\n")
+
+    print(f"  {ui.BOLD}🎯 Risiko-Bewertung{ui.RESET}")
+    if risk_count == 0:
+        print(f"     {ui.BGREEN}✅  KEIN SICHERHEITSRISIKO ERKANNT{ui.RESET}")
+    elif risk_count == 1:
+        print(f"     {ui.BYELLOW}⚠   1 RISIKO – Gerät prüfen (SELinux / CAs / Encryption){ui.RESET}")
+    else:
+        print(f"     {ui.BRED}🚨  {risk_count} RISIKEN ERKANNT – sofortige Forensik empfohlen{ui.RESET}")
+
+    print(f"\n{ui.BCYAN}{'━'*78}{ui.RESET}\n")
 
 
 def create_modern_startup(adb=None):

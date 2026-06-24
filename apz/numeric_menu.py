@@ -91,6 +91,11 @@ class NumericMainMenu:
 
         # TIER 12: PLAY STORE FORENSICS
         (57, "🕵️  PLAY STORE FORENSICS", "Install-Historie · Suchverlauf · APK-Scan · Timeline", "psforensics"),
+
+        # TIER 13: NEUE FORENSIK-MODULE
+        (58, "🔐 VERSCHLÜSSELUNGS-SCANNER", "Disk-Encryption · TLS-Zertifikate · VPN-Erkennung", "encscanner"),
+        (59, "📍 GEO-FORENSIK",             "Location-History · Tower-Triangulation · Reisehistorie", "geoforensics"),
+        (60, "🧬 SENSOR-FORENSIK",          "Accelerometer · Barometer · Biometrie · NFC-Log", "sensorforensics"),
     ]
 
     def __init__(self, adb=None):
@@ -184,7 +189,14 @@ class NumericMainMenu:
         # Gruppe 12: Play Store Forensics
         print(f"{ui.BGREEN}{'TIER 12: PLAY STORE FORENSICS':^80}{ui.RESET}")
         print()
-        for num, icon, desc, key in self.MENU_ITEMS[56:]:
+        for num, icon, desc, key in self.MENU_ITEMS[56:57]:
+            print(f"  {ui.BOLD}{num:2d}{ui.RESET}  {icon:30}  {desc}")
+        print()
+
+        # Gruppe 13: Neue Forensik-Module
+        print(f"{ui.BMAGENTA}{'TIER 13: NEUE FORENSIK-MODULE':^80}{ui.RESET}")
+        print()
+        for num, icon, desc, key in self.MENU_ITEMS[57:]:
             print(f"  {ui.BOLD}{num:2d}{ui.RESET}  {icon:30}  {desc}")
         print()
 
@@ -194,7 +206,7 @@ class NumericMainMenu:
         print("   Q  Beenden")
         print()
 
-        choice = input(f"  {ui.BOLD}☠ ❯ Auswahl (0-57, Q): {ui.RESET}").strip().upper()
+        choice = input(f"  {ui.BOLD}☠ ❯ Auswahl (0-60, Q): {ui.RESET}").strip().upper()
         return choice
 
     def get_handler(self, choice: str) -> str:

@@ -157,9 +157,40 @@ def action_usage_stats(adb: ADB, dev, st: dict, _auto: bool = False) -> None:
         ui.clear(); ui.rule("Play Store – App-Nutzungsstatistiken", ui.CYAN)
     report = _build_report(adb, st, ["usage"])
 
-    lines = [str(u) for u in report.usage[:50]]
-    ui.pager("\n".join(lines), "Nutzungsstatistiken (Top 50)")
-    p = _write("usage_stats.txt", "\n".join(str(u) for u in report.usage))
+    # Nur Apps mit tatsächlicher Nutzung
+    used = [r for r in report.usage if r.fg_time_ms > 0 or r.launch_count > 0]
+    used.sort(key=lambda r: (r.fg_time_ms, r.launch_count), reverse=True)
+    never = [r for r in report.usage if r.fg_time_ms == 0 and r.launch_count == 0]
+
+    rank_icons = ["🥇", "🥈", "🥉", "🏅", "🏅"]
+    lines: list[str] = []
+
+    lines.append(f"  Gesamt Records : {len(report.usage)}")
+    lines.append(f"  Mit Nutzung    : {len(used)}")
+    lines.append(f"  Nie gestartet  : {len(never)}")
+    lines.append("")
+
+    if used:
+        lines.append("── TOP GENUTZTE APPS ──────────────────────────────────────────────")
+        for i, u in enumerate(used[:50]):
+            icon = rank_icons[i] if i < len(rank_icons) else "  ⬢"
+            mins = u.fg_time_ms / 60_000
+            hrs_str = f"{mins/60:.1f}h" if mins >= 60 else f"{mins:.1f}min"
+            launch_str = f"  ({u.launch_count}× gestartet)" if u.launch_count > 0 else ""
+            date_str = f"  {u.last_used}" if u.last_used and u.last_used != "—" else ""
+            pkg_short = u.package.split(".")[-1] if "." in u.package else u.package
+            lines.append(
+                f"  {icon}  {u.package:<45}  {hrs_str:>8}{launch_str}{date_str}"
+            )
+        if len(used) > 50:
+            lines.append(f"  ... und {len(used)-50} weitere")
+    else:
+        lines.append("  ℹ  Keine Nutzungsdaten gefunden (dumpsys usagestats leer)")
+
+    text = "\n".join(lines)
+    ui.pager(text, f"Nutzungsstatistiken ({len(used)} aktive Apps)")
+    p = _write("usage_stats.txt", text + "\n\n── ALLE RECORDS ──\n" +
+               "\n".join(str(u) for u in report.usage))
     ui.ok(f"Gespeichert → {p}")
     if not _auto:
         ui.pause()

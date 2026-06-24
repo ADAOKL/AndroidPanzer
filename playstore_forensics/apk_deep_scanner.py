@@ -233,18 +233,19 @@ def extract_manifest_aapt(adb: ADB, apk_path: str, root: bool = False) -> str:
 
 def extract_manifest_raw(adb: ADB, apk_path: str, root: bool = False) -> str:
     """Extrahiert lesbare Strings aus der binären AndroidManifest.xml im APK."""
-    # unzip -p gibt den Datei-Inhalt auf stdout; strings filtert druckbare Zeichen
+    # timeout 5: verhindert 20s+ Hänger bei großen APKs (Spotify 82MB, SREE 111MB)
+    # wo unzip das komplette APK dekomprimiert bevor er den Manifest-Eintrag liefert.
     out = adb.shell(
-        f"unzip -p {shq(apk_path)} AndroidManifest.xml 2>/dev/null | "
+        f"timeout 5 unzip -p {shq(apk_path)} AndroidManifest.xml 2>/dev/null | "
         "strings -n 4 2>/dev/null | head -n 500",
-        root=root, timeout=25,
+        root=root, timeout=10,
     )
     if not out.strip():
-        # Fallback: direkte strings-Analyse der gesamten APK
+        # Fallback: strings nur auf ersten 8 MB der APK
         out = adb.shell(
-            f"strings -n 6 {shq(apk_path)} 2>/dev/null | "
+            f"head -c 8388608 {shq(apk_path)} 2>/dev/null | strings -n 6 2>/dev/null | "
             "grep -E 'android\\.|permission\\.|activity|service|receiver' | head -n 300",
-            root=root, timeout=25,
+            root=root, timeout=15,
         )
     return out
 
@@ -404,11 +405,12 @@ _BASE64_RE = re.compile(r'[A-Za-z0-9+/]{40,}={0,2}')
 _SHORT_CLASS_RE = re.compile(r'\b[a-z]{1,2}\.[a-z]{1,2}(?:\.[a-z]{1,2})+\b')
 
 
-def detect_obfuscation(adb: ADB, apk_path: str, root: bool = False) -> dict:
+def detect_obfuscation(adb: ADB, apk_path: str, root: bool = False,
+                       cached_strings: str = "") -> dict:
     """Erkennt Obfuskierung und verdächtige Code-Muster via strings-Analyse."""
-    raw = adb.shell(
+    raw = cached_strings or adb.shell(
         f"strings -n 5 {shq(apk_path)} 2>/dev/null | head -n 3000",
-        root=root, timeout=35,
+        root=root, timeout=30,
     )
     if not raw.strip():
         return {
@@ -471,37 +473,37 @@ def detect_obfuscation(adb: ADB, apk_path: str, root: bool = False) -> dict:
 # 5. Malware-String-Suche
 # ---------------------------------------------------------------------------
 
-def check_malware_strings(adb: ADB, apk_path: str, root: bool = False) -> list[str]:
-    """Sucht nach bekannten Malware-Indikatoren im APK-Binary via grep."""
+def check_malware_strings(adb: ADB, apk_path: str, root: bool = False,
+                          cached_strings: str = "") -> list[str]:
+    """Sucht nach bekannten Malware-Indikatoren im APK-Binary.
+
+    cached_strings: vorab extrahierter strings-Output (vermeidet 2. ADB-Aufruf).
+    """
+    import re as _re
     found: list[str] = []
 
-    # Gebündelte grep-Suche: alle Patterns in einem Aufruf
-    pattern_str = "|".join(
-        s.decode("utf-8", errors="ignore") for s in KNOWN_MALWARE_STRINGS
-    )
-    # grep -c zählt matching lines; -l gibt Dateinamen; wir wollen die Matches selbst
-    out = adb.shell(
-        f"strings -n 4 {shq(apk_path)} 2>/dev/null | "
-        f"grep -iE {shq(pattern_str)} 2>/dev/null | head -n 40",
+    raw = cached_strings or adb.shell(
+        f"strings -n 4 {shq(apk_path)} 2>/dev/null | head -n 4000",
         root=root, timeout=30,
     )
-    for line in out.splitlines():
-        line = line.strip()
-        if line and line not in found:
-            found.append(line[:120])
+    if not raw.strip():
+        return found
 
-    # Regex-Patterns via grep auf Device
-    # Alle Regex-Patterns in einem einzigen grep-Aufruf (statt 9 × 15s ADB-Calls)
-    combined_regex = "|".join(MALWARE_REGEX_STRINGS)
-    hit = adb.shell(
-        f"strings -n 4 {shq(apk_path)} 2>/dev/null | "
-        f"grep -E {shq(combined_regex)} 2>/dev/null | head -n 20",
-        root=root, timeout=30,
-    )
-    for line in hit.splitlines():
-        line = line.strip()
-        if line and line not in found:
-            found.append(line[:120])
+    # Bekannte Malware-Strings – lokaler Vergleich (kein weiterer ADB-Aufruf)
+    raw_lower = raw.lower()
+    for kw in KNOWN_MALWARE_STRINGS:
+        kw_str = kw.decode("utf-8", errors="ignore")
+        if kw_str.lower() in raw_lower:
+            found.append(kw_str)
+
+    # Regex-Patterns lokal über gecachten strings-Output
+    for pattern in MALWARE_REGEX_STRINGS:
+        for line in raw.splitlines():
+            if _re.search(pattern, line):
+                stripped = line.strip()
+                if stripped and stripped not in found:
+                    found.append(stripped[:120])
+                break
 
     return found
 
@@ -581,21 +583,28 @@ def deep_scan_apk(adb: ADB, pkg: str, st: dict) -> ApkDeepScanResult:
     # --- Permission-Scoring ---
     result.perm_analysis = score_permissions(manifest.permissions)
 
-    # --- Obfuskation ---
-    result.obfuscation = detect_obfuscation(adb, apk_path, root=is_root)
+    # --- Strings EINMALIG extrahieren (Cache für alle nachfolgenden Analysen) ---
+    # head -c 8MB begrenzt die Eingabe bevor strings liest → verhindert 20s+ bei 100MB APKs
+    strings_raw = adb.shell(
+        f"head -c 8388608 {shq(apk_path)} 2>/dev/null | strings -n 5 2>/dev/null | head -n 3000",
+        root=is_root, timeout=20,
+    )
 
-    # --- Malware-Strings ---
-    result.malware_strings = check_malware_strings(adb, apk_path, root=is_root)
+    # --- Obfuskation (gecachten strings weitergeben) ---
+    result.obfuscation = detect_obfuscation(
+        adb, apk_path, root=is_root, cached_strings=strings_raw
+    )
 
-    # --- Hardcoded IPs / URLs / Secrets ---
+    # --- Malware-Strings (gecachten strings weitergeben) ---
+    result.malware_strings = check_malware_strings(
+        adb, apk_path, root=is_root, cached_strings=strings_raw
+    )
+
+    # --- Hardcoded IPs / URLs / Secrets (aus gecachtem strings_raw) ---
     _ip_re  = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
     _url_re = re.compile(r"https?://[^\s\"'<>]{5,100}")
     _key_re = re.compile(r"(?i)(?:api[_-]?key|secret|password|token|auth)\s*[=:]\s*\S{6,}")
 
-    strings_raw = adb.shell(
-        f"strings -n 6 {shq(apk_path)} 2>/dev/null | head -n 3000",
-        root=is_root, timeout=35,
-    )
     all_ips = [ip for ip in _ip_re.findall(strings_raw)
                if not ip.startswith(("127.", "10.", "0.0.0.0"))]
     result.hardcoded_ips     = list(dict.fromkeys(all_ips))[:20]

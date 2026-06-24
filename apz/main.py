@@ -436,6 +436,18 @@ def _numeric_main_menu(adb: ADB, dev: Device, st: dict, data: dict) -> None:
                 _bar("🕵️  PLAY STORE FORENSICS", _s("57"))
                 from playstore_forensics.main import menu as psf_menu
                 psf_menu(adb, dev, st)
+            elif choice_lower == "58":
+                _bar("🔐 VERSCHLÜSSELUNGS-SCANNER", _s("58"))
+                from . import encryption_scanner
+                encryption_scanner.menu(adb, dev, st)
+            elif choice_lower == "59":
+                _bar("📍 GEO-FORENSIK", _s("59"))
+                from . import geo_forensics
+                geo_forensics.menu(adb, dev, st)
+            elif choice_lower == "60":
+                _bar("🧬 SENSOR-FORENSIK", _s("60"))
+                from . import sensor_forensics
+                sensor_forensics.menu(adb, dev, st)
             else:
                 ui.warn("Ungültige Option!")
                 time.sleep(0.5)
@@ -686,9 +698,9 @@ def run() -> int:
     # 🎨 MODERN STARTUP SCREEN + vollständiger 54-Modul-Scan
     _startup_failures = modern_startup.animate_startup()
     if _startup_failures:
-        LOG.warning("Startup: %d Module fehlerhaft: %s",
-                    len(_startup_failures),
-                    [f"[{n}] {name}" for n, name, _ in _startup_failures])
+        LOG.warn("Startup: %d Module fehlerhaft: %s" % (
+            len(_startup_failures),
+            [f"[{n}] {name}" for n, name, _ in _startup_failures]))
 
     try:
         ADB.start_server()
@@ -733,6 +745,13 @@ def run() -> int:
                 rootprep.start_background(data, st)
             except Exception as e:  # noqa: BLE001
                 LOG.exception("rootprep-start", e)
+
+        # Boot-Analyse: echte Gerätedaten bei jedem Start neu einlesen
+        try:
+            modern_startup.show_boot_device_analysis(adb, data, st)
+        except Exception as e:  # noqa: BLE001
+            LOG.exception("boot-device-analysis", e)
+
         dashboard.render(adb, dev, data)
 
         if not st["is_root"]:

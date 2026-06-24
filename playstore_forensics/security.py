@@ -6,10 +6,16 @@ Tool unbemerkt auf fremden Geräten eingesetzt wird.
 """
 from __future__ import annotations
 
+import json
+import os
 import sys
+import time
 
 # Lazy import – ui nicht auf Modulebene laden (vermeidet Circular-Import)
 _AUTHORIZED: bool = False
+_AUTH_SCENARIO: str = ""
+
+_AUTH_LOG_DIR = os.path.expanduser("~/.config/android-panzer/psf_auth_logs")
 
 
 def require_authorization() -> bool:
@@ -53,14 +59,66 @@ def require_authorization() -> bool:
         "4": "BYOD_POLICY",
     }
     _AUTHORIZED = True
-    print(f"\n  {ui.GREEN}Autorisierung bestätigt: {labels[choice]}{ui.RESET}\n")
+    _AUTH_SCENARIO = labels[choice]
+    print(f"\n  {ui.GREEN}Autorisierung bestätigt: {_AUTH_SCENARIO}{ui.RESET}\n")
+    _persist_auth_log(_AUTH_SCENARIO)
     return True
+
+
+def _persist_auth_log(scenario: str, device_serial: str = "unknown") -> str:
+    """Schreibt unveränderliches Autorisierungs-JSON auf Disk.
+
+    Jede Sitzung bekommt eine eigene Datei (Timestamp im Namen).
+    Für gerichtsverwertbare Chain-of-Custody nach ISO 27037.
+    Gibt den Dateipfad zurück.
+    """
+    os.makedirs(_AUTH_LOG_DIR, mode=0o700, exist_ok=True)
+    ts_utc = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    stamp  = time.strftime("%Y%m%d_%H%M%S", time.gmtime())
+    cert = {
+        "authorization_timestamp_utc": ts_utc,
+        "scenario": scenario,
+        "device_serial": device_serial,
+        "analyst_host": os.uname().nodename if hasattr(os, "uname") else "unknown",
+        "tool": "AndroidPanzer/playstore_forensics",
+        "legal_basis": "§§ 202a/303a StGB – Zugriff ausdrücklich autorisiert",
+    }
+    path = os.path.join(_AUTH_LOG_DIR, f"auth_{stamp}.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(cert, f, indent=2, ensure_ascii=False)
+    os.chmod(path, 0o400)  # read-only – nachträgliche Manipulation erkennbar
+    return path
+
+
+def update_auth_device(device_serial: str) -> None:
+    """Ergänzt den neuesten Auth-Log um die Device-Serial (nach ADB-Verbindung)."""
+    if not os.path.isdir(_AUTH_LOG_DIR):
+        return
+    logs = sorted(f for f in os.listdir(_AUTH_LOG_DIR) if f.startswith("auth_"))
+    if not logs:
+        return
+    path = os.path.join(_AUTH_LOG_DIR, logs[-1])
+    try:
+        os.chmod(path, 0o600)
+        with open(path, encoding="utf-8") as f:
+            cert = json.load(f)
+        cert["device_serial"] = device_serial
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(cert, f, indent=2, ensure_ascii=False)
+        os.chmod(path, 0o400)
+    except (OSError, json.JSONDecodeError):
+        pass
 
 
 def is_authorized() -> bool:
     return _AUTHORIZED
 
 
+def get_auth_scenario() -> str:
+    return _AUTH_SCENARIO
+
+
 def reset_authorization() -> None:
-    global _AUTHORIZED
+    global _AUTHORIZED, _AUTH_SCENARIO
     _AUTHORIZED = False
+    _AUTH_SCENARIO = ""

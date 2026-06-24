@@ -247,3 +247,43 @@ class ForensicReport:
             "errors":    self.errors,
             "warnings":  self.warnings,
         }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "ForensicReport":
+        """Deserialisiert einen gespeicherten Report-Dict zurück in ein ForensicReport.
+
+        Verlustfreier Roundtrip: from_dict(report.to_dict()) == report (strukturell).
+        Wird für Checkpoint-Resume und Report-Reload genutzt.
+        """
+        meta = d.get("meta", {})
+        report = cls(
+            device_serial=meta.get("device_serial", "unknown"),
+            device_model=meta.get("device_model", "unknown"),
+            android_version=meta.get("android_version", "unknown"),
+            root_available=bool(meta.get("root_available", False)),
+            scan_timestamp=meta.get("scan_timestamp", ""),
+            authorization=meta.get("authorization", "UNKNOWN"),
+        )
+        report.installs  = [InstallRecord(**i)  for i in d.get("installs", [])]
+        report.searches  = [SearchRecord(**s)   for s in d.get("searches", [])]
+        report.usage     = [UsageRecord(**u)    for u in d.get("usage", [])]
+        report.apk_scans = [ApkArtifact(**a)    for a in d.get("apk_scans", [])]
+        report.timeline  = [VersionEntry(**t)   for t in d.get("timeline", [])]
+        report.errors    = list(d.get("errors", []))
+        report.warnings  = list(d.get("warnings", []))
+        return report
+
+    @classmethod
+    def from_checkpoint(cls, path: str) -> "ForensicReport | None":
+        """Lädt einen gespeicherten Checkpoint vom Disk.
+
+        Gibt None zurück wenn Datei nicht existiert oder korrupt ist.
+        """
+        import json, os
+        if not os.path.isfile(path):
+            return None
+        try:
+            with open(path, encoding="utf-8") as f:
+                return cls.from_dict(json.load(f))
+        except (json.JSONDecodeError, TypeError, KeyError):
+            return None

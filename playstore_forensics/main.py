@@ -557,65 +557,130 @@ def action_master_risk_report(adb: ADB, dev, st: dict, _auto: bool = False) -> N
 
 
 def full_scan(adb: ADB, dev=None, st: dict | None = None) -> None:
-    """Vollständiger automatisierter Scan aller Module."""
-    from .security import require_authorization
+    """Vollständiger automatisierter Scan aller Module mit Checkpoint-Resume."""
+    from .security import require_authorization, update_auth_device
     if not require_authorization():
         return
     st = st or {}
+
+    # Device-Serial in Auth-Log nachpflegen
+    serial = getattr(dev, "serial", None) or adb.serial if hasattr(adb, "serial") else "unknown"
+    update_auth_device(str(serial))
+
+    import json as _j
+
+    # Checkpoint-Pfad – eine Datei pro Gerät+Tag
+    ckpt_stamp = time.strftime("%Y%m%d")
+    ckpt_path  = os.path.join(OUT, f"checkpoint_{ckpt_stamp}.json")
+
+    def _save_checkpoint(report, phase: int) -> None:
+        d = report.to_dict()
+        d["_checkpoint"] = {"phase_completed": phase, "phases_total": 5}
+        try:
+            os.makedirs(OUT, exist_ok=True)
+            with open(ckpt_path, "w", encoding="utf-8") as f:
+                _j.dump(d, f, indent=2, ensure_ascii=False)
+        except OSError:
+            pass
+
+    def _load_checkpoint():
+        from .models import ForensicReport
+        r = ForensicReport.from_checkpoint(ckpt_path)
+        if r is None:
+            return None, 0
+        # Lese die Phase aus dem Checkpoint-Dict
+        try:
+            with open(ckpt_path, encoding="utf-8") as f:
+                raw = _j.load(f)
+            phase = int(raw.get("_checkpoint", {}).get("phase_completed", 0))
+        except (OSError, ValueError):
+            phase = 0
+        return r, phase
+
     ui.clear(); ui.rule("PLAY STORE ARTIFACT EXTRACTOR – VOLLSCAN", ui.CYAN)
+
+    # Resume-Möglichkeit anbieten
+    existing, last_phase = _load_checkpoint()
+    if existing and last_phase > 0:
+        ui.info(f"Checkpoint gefunden: Phase {last_phase}/5 abgeschlossen ({ckpt_path})")
+        if ui.confirm(f"Scan ab Phase {last_phase + 1} fortsetzen?", True):
+            report = existing
+            ui.ok(f"Resume ab Phase {last_phase + 1}")
+        else:
+            report = None
+            last_phase = 0
+            ui.info("Starte neu …")
+    else:
+        report = None
+        last_phase = 0
     print()
 
     # Phase 1: Basis-Artefakte
-    ui.rule("Phase 1/5 – Basis-Artefakte", ui.YELLOW)
-    tasks = ["installs", "searches", "usage", "timeline"]
-    if st.get("is_root"):
-        tasks.append("apk")
-    report = _build_report(adb, st, tasks)
+    if last_phase < 1:
+        ui.rule("Phase 1/5 – Basis-Artefakte", ui.YELLOW)
+        tasks = ["installs", "searches", "usage", "timeline"]
+        if st.get("is_root"):
+            tasks.append("apk")
+        report = _build_report(adb, st, tasks)
+        _save_checkpoint(report, 1)
+    else:
+        ui.info("Phase 1/5 – Basis-Artefakte (aus Checkpoint)")
 
     # Phase 2: APK Deep Scan
-    ui.rule("Phase 2/5 – APK Deep Scan", ui.YELLOW)
-    try:
-        from .apk_deep_scanner import batch_deep_scan
-        pkgs = [r.package for r in report.installs if not r.is_system][:40]
-        ui.info(f"Scanne {len(pkgs)} Apps …")
-        deep_results = batch_deep_scan(adb, pkgs, st, progress_cb=lambda i,t,l: _progress(i,t,l))
-        print()
-        ui.ok(f"{len(deep_results)} APKs tief analysiert")
-        _write("apk_deep_scan.txt", "\n".join(r.to_text() for r in deep_results))
-    except Exception as e:
-        ui.warn(f"APK Deep Scan Fehler: {e}")
+    if last_phase < 2:
+        ui.rule("Phase 2/5 – APK Deep Scan", ui.YELLOW)
+        try:
+            from .apk_deep_scanner import batch_deep_scan
+            pkgs = [r.package for r in report.installs if not r.is_system][:40]
+            ui.info(f"Scanne {len(pkgs)} Apps …")
+            deep_results = batch_deep_scan(adb, pkgs, st, progress_cb=lambda i,t,l: _progress(i,t,l))
+            print()
+            ui.ok(f"{len(deep_results)} APKs tief analysiert")
+            _write("apk_deep_scan.txt", "\n".join(r.to_text() for r in deep_results))
+            _save_checkpoint(report, 2)
+        except Exception as e:
+            ui.warn(f"APK Deep Scan Fehler: {e}")
+    else:
+        ui.info("Phase 2/5 – APK Deep Scan (aus Checkpoint)")
 
     # Phase 3: Netzwerk-Forensik
-    ui.rule("Phase 3/5 – Netzwerk-Forensik", ui.YELLOW)
-    try:
-        from .network_forensics import run_network_forensics
-        net_result = run_network_forensics(adb, dev, st)
-        import json as _j
-        _write("network_forensics.json", _j.dumps(net_result, default=str, indent=2))
-        ui.ok(f"{len(net_result.get('connections',[]))} Verbindungen, "
-              f"{len(net_result.get('anomalies',[]))} Anomalien")
-    except Exception as e:
-        ui.warn(f"Netzwerk-Forensik Fehler: {e}")
+    if last_phase < 3:
+        ui.rule("Phase 3/5 – Netzwerk-Forensik", ui.YELLOW)
+        try:
+            from .network_forensics import run_network_forensics
+            net_result = run_network_forensics(adb, dev, st)
+            _write("network_forensics.json", _j.dumps(net_result, default=str, indent=2))
+            ui.ok(f"{len(net_result.get('connections',[]))} Verbindungen, "
+                  f"{len(net_result.get('anomalies',[]))} Anomalien")
+            _save_checkpoint(report, 3)
+        except Exception as e:
+            ui.warn(f"Netzwerk-Forensik Fehler: {e}")
+    else:
+        ui.info("Phase 3/5 – Netzwerk-Forensik (aus Checkpoint)")
 
-    # Phase 4: Permission Matrix (nur Top-25 Apps für Speed)
-    ui.rule("Phase 4/5 – Permission Matrix", ui.YELLOW)
-    try:
-        from .permission_matrix import analyze_all_apps, format_permission_matrix
-        pkgs_perm = [r.package for r in report.installs if not r.is_system][:25]
-        profiles = analyze_all_apps(adb, pkgs_perm, st,
-                                    progress_cb=lambda i,t,l: _progress(i,t,l))
-        print()
-        _write("permission_matrix.txt", format_permission_matrix(profiles))
-        critical = [p for p in profiles if p.risk_level == "CRITICAL"]
-        high = [p for p in profiles if p.risk_level == "HIGH"]
-        ui.ok(f"CRITICAL: {len(critical)}  HIGH: {len(high)}")
-    except Exception as e:
-        ui.warn(f"Permission Matrix Fehler: {e}")
+    # Phase 4: Permission Matrix
+    if last_phase < 4:
+        ui.rule("Phase 4/5 – Permission Matrix", ui.YELLOW)
+        try:
+            from .permission_matrix import analyze_all_apps, format_permission_matrix
+            pkgs_perm = [r.package for r in report.installs if not r.is_system][:25]
+            profiles = analyze_all_apps(adb, pkgs_perm, st,
+                                        progress_cb=lambda i,t,l: _progress(i,t,l))
+            print()
+            _write("permission_matrix.txt", format_permission_matrix(profiles))
+            critical = [p for p in profiles if p.risk_level == "CRITICAL"]
+            high = [p for p in profiles if p.risk_level == "HIGH"]
+            ui.ok(f"CRITICAL: {len(critical)}  HIGH: {len(high)}")
+            _save_checkpoint(report, 4)
+        except Exception as e:
+            ui.warn(f"Permission Matrix Fehler: {e}")
+    else:
+        ui.info("Phase 4/5 – Permission Matrix (aus Checkpoint)")
 
     # Phase 5: Anomalien & Reports
     ui.rule("Phase 5/5 – Anomalie-Analyse & Reports", ui.YELLOW)
     anomalies = detect_anomalies(report)
-    stats = compute_stats(report)
+    compute_stats(report)
 
     print()
     ui.rule("VOLLSCAN ABGESCHLOSSEN", ui.GREEN)
@@ -633,6 +698,12 @@ def full_scan(adb: ADB, dev=None, st: dict | None = None) -> None:
     ui.ok(f"Reports gespeichert in {OUT}:")
     for fmt, path in saved.items():
         ui.info(f"  {fmt.upper():8} → {path}")
+
+    # Checkpoint löschen nach erfolgreichem Abschluss
+    try:
+        os.unlink(ckpt_path)
+    except OSError:
+        pass
 
     ui.pause()
 

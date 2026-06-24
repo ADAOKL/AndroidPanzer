@@ -109,7 +109,8 @@ def collect(adb: ADB, dev: Device) -> dict:
     # Netzwerk
     d["wifi_ip"] = _ip(adb.shell("ip -f inet addr show wlan0"))
     d["mobile_ip"] = _ip(adb.shell("ip -f inet addr show rmnet_data0")) or _ip(adb.shell("ip -f inet addr show rmnet0"))
-    d["wifi_mac"] = _first(adb.shell("cat /sys/class/net/wlan0/address"))
+    _raw_mac = adb.shell("cat /sys/class/net/wlan0/address 2>/dev/null") or ""
+    d["wifi_mac"] = _raw_mac.strip() if re.match(r'^[0-9a-fA-F:]{17}', _raw_mac.strip()) else "—"
 
     # Mobilfunk / SIM
     d["operator"] = _first(g("gsm.operator.alpha"), g("gsm.sim.operator.alpha"))

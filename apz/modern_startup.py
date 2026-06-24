@@ -664,7 +664,7 @@ def show_feature_highlight() -> None:
         ("🔍 CONTENT DETECTION",          "Adult-Content Scanner mit Keyword & Scoring"),
     ]
     h = highlights[int(time.time()) % len(highlights)]
-    w = ui.width()
+    w = min(ui.width(), 80)
     inner = w - 4
     title_pad = inner - 2
     print(f"\n{ui.BCYAN}┌{'─' * (w - 2)}┐")

@@ -289,9 +289,10 @@ def _auto_tag() -> str:
 
 def ask(prompt: str, default: str = "") -> str:
     if is_auto():
-        sfx = f" {GREY}[{default}]{RESET}" if default else ""
+        auto_default = default if default else "0"
+        sfx = f" {GREY}[{auto_default}]{RESET}"
         print(f"{BOLD}{NEON}☠ ❯{RESET} {prompt}{sfx}:  {_auto_tag()}")
-        return default
+        return auto_default
     sfx = f" {GREY}[{default}]{RESET}" if default else ""
     try:
         v = input(f"{BOLD}{NEON}☠ ❯{RESET} {prompt}{sfx}: ").strip()

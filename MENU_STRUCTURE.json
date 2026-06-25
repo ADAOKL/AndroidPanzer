@@ -1,0 +1,3162 @@
+{
+  "meta": {
+    "project": "AndroidPanzer",
+    "generated": "2026-06-25",
+    "sources": [
+      "apz/numeric_menu.py",
+      "apz/registry.py",
+      "apz/main.py"
+    ],
+    "totals": {
+      "main_menu_items": 61,
+      "main_menu_tiers": 13,
+      "depth_engine_submenu": 4,
+      "categories": 45,
+      "category_features": 450
+    },
+    "feature_kinds": {
+      "cmd": "ADB-Shell-Kommando, Ausgabe im Pager",
+      "rootcmd": "ADB-Shell via su -c (Root erforderlich)",
+      "ask": "Fragt Eingabewert ab, setzt in Template ein",
+      "fn": "Interaktiver Handler (handlers.py)",
+      "info": "Nur Erklärung / Dokumentation, kein aktiver ADB-Aufruf",
+      "sdr": "Benötigt SDR/JTAG/Spezial-Hardware",
+      "danger": "Destruktiv / irreversibel – Doppelbestätigung erforderlich"
+    }
+  },
+  "main_menu": {
+    "description": "Numerisches Hauptmenü (0-60, Q, A). 0=Zurück, Q=Beenden, A=Auto-Modus.",
+    "special_keys": {
+      "0": "Zurück / Gerät wechseln",
+      "Q": "Beenden",
+      "A": "Auto-Modus umschalten"
+    },
+    "tiers": [
+      {
+        "tier": 1,
+        "title": "BASIS-ANALYSE",
+        "range": "1-5",
+        "items": [
+          {
+            "n": 1,
+            "icon": "🔬",
+            "name": "TIEFE ANALYSE",
+            "desc": "Alle 450 Features",
+            "module": "deep_analysis_scan"
+          },
+          {
+            "n": 2,
+            "icon": "📊",
+            "name": "DASHBOARD",
+            "desc": "System-Übersicht",
+            "module": "dashboard"
+          },
+          {
+            "n": 3,
+            "icon": "📋",
+            "name": "KATEGORIEN",
+            "desc": "45 Kategorien detailliert",
+            "module": "registry"
+          },
+          {
+            "n": 4,
+            "icon": "🎨",
+            "name": "UI THEME",
+            "desc": "Design-Optionen",
+            "module": "settings_manager",
+            "adb_required": false
+          },
+          {
+            "n": 5,
+            "icon": "⚙️",
+            "name": "EINSTELLUNGEN",
+            "desc": "Konfiguration",
+            "module": "settings_manager",
+            "adb_required": false
+          }
+        ]
+      },
+      {
+        "tier": 2,
+        "title": "AUDIO / VIDEO / NETZWERK",
+        "range": "6-8",
+        "items": [
+          {
+            "n": 6,
+            "icon": "🎙️",
+            "name": "MICROPHONE TAP",
+            "desc": "Audio-Recording + Keywords",
+            "module": "microphone_tap"
+          },
+          {
+            "n": 7,
+            "icon": "📷",
+            "name": "CAMERA TAP",
+            "desc": "Video & Screenshots",
+            "module": "camera_tap"
+          },
+          {
+            "n": 8,
+            "icon": "🌐",
+            "name": "NETWORK ANALYZER",
+            "desc": "SIM/WiFi/Cellular",
+            "module": "network_analyzer"
+          }
+        ]
+      },
+      {
+        "tier": 3,
+        "title": "FORENSIK & SCANNING",
+        "range": "9-13",
+        "items": [
+          {
+            "n": 9,
+            "icon": "🔍",
+            "name": "FORENSIK SUITE",
+            "desc": "Umfassende Analyse",
+            "module": "forensics"
+          },
+          {
+            "n": 10,
+            "icon": "📦",
+            "name": "APK SCANNER",
+            "desc": "Malware & Security",
+            "module": "apkscan"
+          },
+          {
+            "n": 11,
+            "icon": "🗃️",
+            "name": "APP SCANNER",
+            "desc": "Tiefe App-Analyse",
+            "module": "appscan"
+          },
+          {
+            "n": 12,
+            "icon": "📁",
+            "name": "DATEI TREE",
+            "desc": "Dateisystem-Explorer",
+            "module": "filetree"
+          },
+          {
+            "n": 13,
+            "icon": "💾",
+            "name": "DATEN FORENSIK",
+            "desc": "Datenrettung & Recovery",
+            "module": "dataforensics"
+          }
+        ]
+      },
+      {
+        "tier": 4,
+        "title": "ERWEITERTE TOOLS",
+        "range": "14-18",
+        "items": [
+          {
+            "n": 14,
+            "icon": "🎯",
+            "name": "TIEFE ENGINE",
+            "desc": "Advanced Feature Explorer",
+            "module": "frida_engine+traffic+messenger+timeline",
+            "has_submenu": true
+          },
+          {
+            "n": 15,
+            "icon": "🗂️",
+            "name": "CASE DATABASE",
+            "desc": "Fall-Management",
+            "module": "casedb"
+          },
+          {
+            "n": 16,
+            "icon": "📄",
+            "name": "REPORT GENERATOR",
+            "desc": "Berichte & Export",
+            "module": "report"
+          },
+          {
+            "n": 17,
+            "icon": "🔄",
+            "name": "MODE SWITCH",
+            "desc": "ADB Mode Switching",
+            "module": "modeswitch"
+          },
+          {
+            "n": 18,
+            "icon": "🔧",
+            "name": "CUSTOM FIRMWARE",
+            "desc": "Firmware-Modding",
+            "module": "customfw"
+          }
+        ]
+      },
+      {
+        "tier": 5,
+        "title": "SPECIALS & ADVANCED",
+        "range": "19-24",
+        "items": [
+          {
+            "n": 19,
+            "icon": "🌐",
+            "name": "ROOTKIT SCANNER",
+            "desc": "Kernel-Level Threats",
+            "module": "rootkit"
+          },
+          {
+            "n": 20,
+            "icon": "🚀",
+            "name": "ROOTING TOOLS",
+            "desc": "Device Rooting",
+            "module": "rooting"
+          },
+          {
+            "n": 21,
+            "icon": "📸",
+            "name": "DATA ACQUISITION",
+            "desc": "Vollständige Extraktion",
+            "module": "acquire"
+          },
+          {
+            "n": 22,
+            "icon": "🔓",
+            "name": "APP DECRYPTION",
+            "desc": "Hashcat-basiert",
+            "module": "app_decryption"
+          },
+          {
+            "n": 23,
+            "icon": "🔨",
+            "name": "BRUTE FORCE",
+            "desc": "50 Attack Strategies",
+            "module": "brute_force"
+          },
+          {
+            "n": 24,
+            "icon": "📡",
+            "name": "WIFI HANDSHAKE",
+            "desc": "Aircrack-ng Style",
+            "module": "wifi_handshake"
+          }
+        ]
+      },
+      {
+        "tier": 6,
+        "title": "SECURITY & INTELLIGENCE",
+        "range": "25-30",
+        "items": [
+          {
+            "n": 25,
+            "icon": "🛡️",
+            "name": "DNS GUARDIAN",
+            "desc": "Monitor & Filter",
+            "module": "dns_guardian"
+          },
+          {
+            "n": 26,
+            "icon": "🎯",
+            "name": "TRACKER SYSTEM",
+            "desc": "IP/Phone/Geo",
+            "module": "tracker_system"
+          },
+          {
+            "n": 27,
+            "icon": "🧠",
+            "name": "INTELLIGENT ENGINE",
+            "desc": "ML/KI/Automation",
+            "module": "intelligent_engine"
+          },
+          {
+            "n": 28,
+            "icon": "💾",
+            "name": "DATABASE SCANNER",
+            "desc": "Clone & Archive",
+            "module": "database_scanner"
+          },
+          {
+            "n": 29,
+            "icon": "🧪",
+            "name": "LAB MANAGER",
+            "desc": "venv Labs",
+            "module": "lab_manager"
+          },
+          {
+            "n": 30,
+            "icon": "🌐",
+            "name": "3D WIFI SCANNER",
+            "desc": "Raumkartographie",
+            "module": "wifi_room_scanner_3d"
+          }
+        ]
+      },
+      {
+        "tier": 7,
+        "title": "NEW ADVANCED FEATURES",
+        "range": "31-33",
+        "items": [
+          {
+            "n": 31,
+            "icon": "🔍",
+            "name": "ADULT DETECTOR",
+            "desc": "Audio+Geruch",
+            "module": "adult_activity_detector"
+          },
+          {
+            "n": 32,
+            "icon": "🔴",
+            "name": "ANOMALY DETECTOR",
+            "desc": "ROT Pulsierend",
+            "module": "anomaly_detector"
+          },
+          {
+            "n": 33,
+            "icon": "🏥",
+            "name": "AI DOCTOR",
+            "desc": "Auto-Fix",
+            "module": "ai_doctor"
+          }
+        ]
+      },
+      {
+        "tier": 8,
+        "title": "FORENSIC & SECURITY ADVANCED",
+        "range": "34-40",
+        "items": [
+          {
+            "n": 34,
+            "icon": "🔬",
+            "name": "FORENSIC ANALYZER",
+            "desc": "Sexual Activity Detection",
+            "module": "forensic_audio_analyzer"
+          },
+          {
+            "n": 35,
+            "icon": "🔐",
+            "name": "SECURITY FRAMEWORK",
+            "desc": "Enterprise Security",
+            "module": "security_framework"
+          },
+          {
+            "n": 36,
+            "icon": "🔑",
+            "name": "PASSWORD MANAGER",
+            "desc": "Passwort-Verwaltung",
+            "module": "password_manager"
+          },
+          {
+            "n": 37,
+            "icon": "🎵",
+            "name": "AUDIO PLAYBACK",
+            "desc": "Wiedergabe & Analyse",
+            "module": "audio_playback"
+          },
+          {
+            "n": 38,
+            "icon": "🐚",
+            "name": "ADB SHELL",
+            "desc": "Interactive Shell",
+            "module": "adb_shell"
+          },
+          {
+            "n": 39,
+            "icon": "🔓",
+            "name": "AUTO ROOT ENGINE",
+            "desc": "Rooting + Data Recovery",
+            "module": "auto_root_engine"
+          },
+          {
+            "n": 40,
+            "icon": "🎤",
+            "name": "KEYWORD RECORDER",
+            "desc": "Audio mit Keywords",
+            "module": "keyword_recorder"
+          }
+        ]
+      },
+      {
+        "tier": 9,
+        "title": "KLASSISCHE TOOLS",
+        "range": "41-54",
+        "items": [
+          {
+            "n": 41,
+            "icon": "🚑",
+            "name": "AUTO-RESCUE",
+            "desc": "Automatische Rettungs-/Flash-Kaskade",
+            "module": "rescue"
+          },
+          {
+            "n": 42,
+            "icon": "📡",
+            "name": "BOOTLOOP-MONITOR",
+            "desc": "USB-Zyklen Live-Überwachung",
+            "module": "bootloop",
+            "adb_required": false
+          },
+          {
+            "n": 43,
+            "icon": "🕵",
+            "name": "OSINT-TOOLKIT",
+            "desc": "IP/Mail/Username/Domain/KI-Analyst",
+            "module": "osint"
+          },
+          {
+            "n": 44,
+            "icon": "🤖",
+            "name": "KI-ADB-SHELL",
+            "desc": "Lokale Ollama KI-Shell",
+            "module": "aishell"
+          },
+          {
+            "n": 45,
+            "icon": "📱",
+            "name": "SAMSUNG TOOLS",
+            "desc": "Root / Odin / TWRP / Flasher",
+            "module": "samsung"
+          },
+          {
+            "n": 46,
+            "icon": "🔶",
+            "name": "MEDIATEK ROOT",
+            "desc": "mtkclient / BROM-Root",
+            "module": "mediatek"
+          },
+          {
+            "n": 47,
+            "icon": "🏷",
+            "name": "HERSTELLER-TOOLS",
+            "desc": "Xiaomi / Pixel / OnePlus / Moto / Huawei",
+            "module": "brands"
+          },
+          {
+            "n": 48,
+            "icon": "📶",
+            "name": "MOBILFUNK-MONITOR",
+            "desc": "Live Zellen- & IMSI-Monitor",
+            "module": "handlers.cell_monitor"
+          },
+          {
+            "n": 49,
+            "icon": "🧪",
+            "name": "LABOR-EINRICHTUNG",
+            "desc": "Alle Forensik-Tools installieren (apt/pip)",
+            "module": "labsetup",
+            "adb_required": false
+          },
+          {
+            "n": 50,
+            "icon": "🔬",
+            "name": "DEEP-FORENSIK",
+            "desc": "Timeline / Geo-Map / Radio-History / gelöschte Daten",
+            "module": "deepforensics"
+          },
+          {
+            "n": 51,
+            "icon": "📞",
+            "name": "TELEFON-OSINT",
+            "desc": "Carrier-Lookup / Reputation / Social-Media-Suche",
+            "module": "phoneosint"
+          },
+          {
+            "n": 52,
+            "icon": "🔑",
+            "name": "GOOGLE-KONTEN",
+            "desc": "Alle angemeldeten Google-Konten + FRP-Schutz scannen",
+            "module": "google_account_scanner"
+          },
+          {
+            "n": 53,
+            "icon": "📱",
+            "name": "KONTO-SCANNER",
+            "desc": "Samsung / Microsoft / Social Media / Streaming-Konten",
+            "module": "account_scanner"
+          },
+          {
+            "n": 54,
+            "icon": "🔒",
+            "name": "FRP-SCANNER",
+            "desc": "Factory Reset Protection – 10 Erkennungsmethoden",
+            "module": "frp_scanner"
+          }
+        ]
+      },
+      {
+        "tier": 10,
+        "title": "SIM-KARTEN TOOLKIT",
+        "range": "55",
+        "items": [
+          {
+            "n": 55,
+            "icon": "💳",
+            "name": "SIM-TOOLKIT",
+            "desc": "35 Kategorien · 350 Features · Alle SIM-Modelle",
+            "module": "sim_toolkit"
+          }
+        ]
+      },
+      {
+        "tier": 11,
+        "title": "APP-DOMAIN MONITOR",
+        "range": "56",
+        "items": [
+          {
+            "n": 56,
+            "icon": "🌐",
+            "name": "APP-DOMAIN MONITOR",
+            "desc": "Echtzeit DNS · Tracker · Blacklist · App-Traffic",
+            "module": "app_traffic_monitor"
+          }
+        ]
+      },
+      {
+        "tier": 12,
+        "title": "PLAY STORE FORENSICS",
+        "range": "57",
+        "items": [
+          {
+            "n": 57,
+            "icon": "🕵️",
+            "name": "PLAY STORE FORENSICS",
+            "desc": "Install-Historie · Suchverlauf · APK-Scan · Timeline",
+            "module": "playstore_forensics.main"
+          }
+        ]
+      },
+      {
+        "tier": 13,
+        "title": "NEUE FORENSIK-MODULE",
+        "range": "58-61",
+        "items": [
+          {
+            "n": 58,
+            "icon": "🔐",
+            "name": "VERSCHLÜSSELUNGS-SCANNER",
+            "desc": "Disk-Encryption · TLS-Zertifikate · VPN-Erkennung",
+            "module": "encryption_scanner"
+          },
+          {
+            "n": 59,
+            "icon": "📍",
+            "name": "GEO-FORENSIK",
+            "desc": "Location-History · Tower-Triangulation · Reisehistorie",
+            "module": "geo_forensics"
+          },
+          {
+            "n": 60,
+            "icon": "🧬",
+            "name": "SENSOR-FORENSIK",
+            "desc": "Accelerometer · Barometer · Biometrie · NFC-Log",
+            "module": "sensor_forensics"
+          },
+          {
+            "n": 61,
+            "icon": "🔒",
+            "name": "BOOTLOADER SPERREN",
+            "desc": "Download-Modus → fastboot lock → Reboot",
+            "module": "bootloader_locker",
+            "adb_required": true
+          }
+        ]
+      }
+    ]
+  },
+  "depth_engine_submenu": {
+    "parent_menu_item": 14,
+    "description": "Submenü von Menü #14 TIEFE ENGINE",
+    "items": [
+      {
+        "n": 1,
+        "icon": "🧬",
+        "name": "Frida-Runtime-Engine",
+        "desc": "Hooks: Keys, Passwörter, SSL-Unpin, Tokens",
+        "module": "frida_engine"
+      },
+      {
+        "n": 2,
+        "icon": "🌐",
+        "name": "Traffic-Interception",
+        "desc": "mitmproxy + Frida → HTTPS-Klartext",
+        "module": "traffic"
+      },
+      {
+        "n": 3,
+        "icon": "💬",
+        "name": "Messenger-Decrypt & HTML-Timeline",
+        "desc": "WhatsApp / Telegram / Signal",
+        "module": "messenger"
+      },
+      {
+        "n": 4,
+        "icon": "🗓",
+        "name": "Super-Timeline & Geo-Mapping",
+        "desc": "Alle Spuren + Foto-GPS → KML",
+        "module": "timeline"
+      }
+    ]
+  },
+  "categories": [
+    {
+      "cat": 1,
+      "icon": "🔬",
+      "name": "System & Hardware-Diagnose",
+      "features": [
+        {
+          "n": 1,
+          "title": "Speicherauslastung (RAM + intern)",
+          "kind": "cmd"
+        },
+        {
+          "n": 2,
+          "title": "CPU-Echtzeit (Frequenzen + Top-Prozesse)",
+          "kind": "cmd"
+        },
+        {
+          "n": 3,
+          "title": "Display-Spezifikationen (Auflösung/DPI/Hz)",
+          "kind": "cmd"
+        },
+        {
+          "n": 4,
+          "title": "Ausführlicher Akkuzustand",
+          "kind": "cmd"
+        },
+        {
+          "n": 5,
+          "title": "Netzwerk-Status (IP/MAC/RSSI)",
+          "kind": "cmd"
+        },
+        {
+          "n": 6,
+          "title": "SIM- & Provider-Infos",
+          "kind": "cmd"
+        },
+        {
+          "n": 7,
+          "title": "Sensoren-Rohdaten",
+          "kind": "cmd"
+        },
+        {
+          "n": 8,
+          "title": "Bootloader- & Partitionsstatus",
+          "kind": "cmd"
+        },
+        {
+          "n": 9,
+          "title": "Kernel- & Build-Details",
+          "kind": "cmd"
+        },
+        {
+          "n": 10,
+          "title": "Audio-Status (Pegel/Geräte)",
+          "kind": "cmd"
+        }
+      ]
+    },
+    {
+      "cat": 2,
+      "icon": "📱",
+      "name": "Apps & Paket-Management",
+      "features": [
+        {
+          "n": 11,
+          "title": "App-Listen-Export (System/Drittanbieter)",
+          "kind": "fn"
+        },
+        {
+          "n": 12,
+          "title": "Sideloading (APK / Split-APK installieren)",
+          "kind": "fn"
+        },
+        {
+          "n": 13,
+          "title": "App deinstallieren / deaktivieren (Bloatware)",
+          "kind": "fn"
+        },
+        {
+          "n": 14,
+          "title": "App-Daten löschen / Force-Stop / Starten",
+          "kind": "fn"
+        },
+        {
+          "n": 15,
+          "title": "APK-Pfad & Signatur ermitteln",
+          "kind": "fn"
+        },
+        {
+          "n": 16,
+          "title": "Berechtigungen gewähren/entziehen",
+          "kind": "fn"
+        },
+        {
+          "n": 17,
+          "title": "App-Komponenten (Activities/Services/Receiver)",
+          "kind": "fn"
+        },
+        {
+          "n": 18,
+          "title": "Deep Link / Intent testen",
+          "kind": "fn"
+        },
+        {
+          "n": 19,
+          "title": "App-Aktivitäten fuzzen (Monkey)",
+          "kind": "fn"
+        },
+        {
+          "n": 20,
+          "title": "App-Nutzungsstatistik (24h)",
+          "kind": "cmd"
+        }
+      ]
+    },
+    {
+      "cat": 3,
+      "icon": "🎮",
+      "name": "UI-Automation & Remote Control",
+      "features": [
+        {
+          "n": 21,
+          "title": "Tap (Fingertipp auf X/Y)",
+          "kind": "fn"
+        },
+        {
+          "n": 22,
+          "title": "Swipe / Scroll / Drag",
+          "kind": "fn"
+        },
+        {
+          "n": 23,
+          "title": "Texteingabe",
+          "kind": "fn"
+        },
+        {
+          "n": 24,
+          "title": "Hardware-Tasten emulieren",
+          "kind": "fn"
+        },
+        {
+          "n": 25,
+          "title": "Tastatur-Scancodes (Enter/Tab/Media)",
+          "kind": "fn"
+        },
+        {
+          "n": 26,
+          "title": "Aufwecken / Sperren",
+          "kind": "fn"
+        },
+        {
+          "n": 27,
+          "title": "UI-Skelett auslesen (uiautomator dump)",
+          "kind": "fn"
+        },
+        {
+          "n": 28,
+          "title": "Keyguard-Wischentsperrung",
+          "kind": "cmd"
+        },
+        {
+          "n": 29,
+          "title": "Kontrolliertes Scrollen (Feed/Web)",
+          "kind": "fn"
+        },
+        {
+          "n": 30,
+          "title": "Multitouch / Pinch-to-Zoom",
+          "kind": "info"
+        }
+      ]
+    },
+    {
+      "cat": 4,
+      "icon": "⚙️",
+      "name": "System-Konfiguration & Tweaks",
+      "features": [
+        {
+          "n": 31,
+          "title": "Auflösung/DPI ändern",
+          "kind": "ask"
+        },
+        {
+          "n": 32,
+          "title": "Globaler Darkmode",
+          "kind": "ask"
+        },
+        {
+          "n": 33,
+          "title": "Funkmodule schalten (wifi/bt/nfc/data)",
+          "kind": "ask"
+        },
+        {
+          "n": 34,
+          "title": "Doze-Mode erzwingen",
+          "kind": "cmd"
+        },
+        {
+          "n": 35,
+          "title": "Sprache/Zeitzone (Zeitzone)",
+          "kind": "ask"
+        },
+        {
+          "n": 36,
+          "title": "Animationsskalierung",
+          "kind": "ask"
+        },
+        {
+          "n": 37,
+          "title": "System-Overlays auflisten",
+          "kind": "cmd"
+        },
+        {
+          "n": 38,
+          "title": "System-Benachrichtigung einblenden",
+          "kind": "info"
+        },
+        {
+          "n": 39,
+          "title": "Immersive Mode (Leisten ausblenden)",
+          "kind": "ask"
+        },
+        {
+          "n": 40,
+          "title": "Lade-Limitierung (z.B. 80%)",
+          "kind": "info"
+        }
+      ]
+    },
+    {
+      "cat": 5,
+      "icon": "🛠️",
+      "name": "Datei-Transfer & Medien",
+      "features": [
+        {
+          "n": 41,
+          "title": "High-Speed Backup (adb pull)",
+          "kind": "fn"
+        },
+        {
+          "n": 42,
+          "title": "Datei-Upload (adb push)",
+          "kind": "fn"
+        },
+        {
+          "n": 43,
+          "title": "Screenshot → PC (PNG)",
+          "kind": "fn"
+        },
+        {
+          "n": 44,
+          "title": "Screen-Recording → PC (MP4)",
+          "kind": "fn"
+        },
+        {
+          "n": 45,
+          "title": "Echtzeit-Logcat (Crashes filtern)",
+          "kind": "fn"
+        },
+        {
+          "n": 46,
+          "title": "Dateisystem-Snapshot (Verzeichnis)",
+          "kind": "ask"
+        },
+        {
+          "n": 47,
+          "title": "Zwischenablage lesen/schreiben",
+          "kind": "fn"
+        },
+        {
+          "n": 48,
+          "title": "Vollständiges ADB-Backup (verschlüsselt)",
+          "kind": "fn"
+        },
+        {
+          "n": 49,
+          "title": "Prozess-Kill-Switch (Hänger beenden)",
+          "kind": "ask"
+        },
+        {
+          "n": 50,
+          "title": "Reboot-Steuerung (Recovery/Bootloader/…)",
+          "kind": "fn"
+        }
+      ]
+    },
+    {
+      "cat": 6,
+      "icon": "💾",
+      "name": "Partitionen, Images & Boot",
+      "features": [
+        {
+          "n": 51,
+          "title": "EMMC/UFS-Partition dumpen (dd → img)",
+          "kind": "rootcmd"
+        },
+        {
+          "n": 52,
+          "title": "Partitionstabelle auslesen",
+          "kind": "cmd"
+        },
+        {
+          "n": 53,
+          "title": "Boot-Image extrahieren (boot.img)",
+          "kind": "rootcmd"
+        },
+        {
+          "n": 54,
+          "title": "Recovery/TWRP flashen",
+          "kind": "info"
+        },
+        {
+          "n": 55,
+          "title": "OTA-Update sideloaden (update.zip)",
+          "kind": "info"
+        },
+        {
+          "n": 56,
+          "title": "Logcat während Boot/Bootloop",
+          "kind": "fn"
+        },
+        {
+          "n": 57,
+          "title": "Verschlüsselungsstatus (FBE/FDE)",
+          "kind": "cmd"
+        },
+        {
+          "n": 58,
+          "title": "Sicherer Datei-Wipe (überschreiben)",
+          "kind": "danger"
+        },
+        {
+          "n": 59,
+          "title": "NVRAM/EFS sichern (IMEI/Funk-Kalibrierung)",
+          "kind": "rootcmd"
+        },
+        {
+          "n": 60,
+          "title": "Slot A/B Status (bootctl)",
+          "kind": "cmd"
+        }
+      ]
+    },
+    {
+      "cat": 7,
+      "icon": "🌐",
+      "name": "Netzwerk, Proxy & Traffic",
+      "features": [
+        {
+          "n": 61,
+          "title": "Globalen Proxy setzen (Burp/mitmproxy)",
+          "kind": "fn"
+        },
+        {
+          "n": 62,
+          "title": "Reverse Port Forwarding (PC-Net teilen)",
+          "kind": "fn"
+        },
+        {
+          "n": 63,
+          "title": "Port Forwarding (Geräte-Port → PC)",
+          "kind": "fn"
+        },
+        {
+          "n": 64,
+          "title": "Netstat (offene Verbindungen)",
+          "kind": "cmd"
+        },
+        {
+          "n": 65,
+          "title": "DNS-Server setzen",
+          "kind": "ask"
+        },
+        {
+          "n": 66,
+          "title": "WLAN-Passwörter auslesen",
+          "kind": "rootcmd"
+        },
+        {
+          "n": 67,
+          "title": "Paket-Sniffing (tcpdump → PCAP)",
+          "kind": "fn"
+        },
+        {
+          "n": 68,
+          "title": "ADB-over-WiFi aktivieren",
+          "kind": "fn"
+        },
+        {
+          "n": 69,
+          "title": "Netzwerk-Drosselung simulieren",
+          "kind": "info"
+        },
+        {
+          "n": 70,
+          "title": "VPN-Profil triggern",
+          "kind": "cmd"
+        }
+      ]
+    },
+    {
+      "cat": 8,
+      "icon": "⚡",
+      "name": "Performance & Battery-Profiling",
+      "features": [
+        {
+          "n": 71,
+          "title": "FPS / Frame-Drops (gfxinfo)",
+          "kind": "ask"
+        },
+        {
+          "n": 72,
+          "title": "Thermal / Throttling",
+          "kind": "cmd"
+        },
+        {
+          "n": 73,
+          "title": "Wakelock-Detektor",
+          "kind": "cmd"
+        },
+        {
+          "n": 74,
+          "title": "CPU-Governor auf Performance",
+          "kind": "rootcmd"
+        },
+        {
+          "n": 75,
+          "title": "RAM-Stresstest / LMK-Verhalten",
+          "kind": "info"
+        },
+        {
+          "n": 76,
+          "title": "App-Startzeit messen",
+          "kind": "ask"
+        },
+        {
+          "n": 77,
+          "title": "Hintergrundprozess-Limit setzen",
+          "kind": "ask"
+        },
+        {
+          "n": 78,
+          "title": "Bugreport für Battery Historian",
+          "kind": "cmd"
+        },
+        {
+          "n": 79,
+          "title": "GPU-Rendering-Profil (Balken am Display)",
+          "kind": "ask"
+        },
+        {
+          "n": 80,
+          "title": "Zombie-/Hänger-Prozesse killen",
+          "kind": "cmd"
+        }
+      ]
+    },
+    {
+      "cat": 9,
+      "icon": "🛡️",
+      "name": "Sicherheit & Exploit-Audit",
+      "features": [
+        {
+          "n": 81,
+          "title": "CA-Zertifikat installieren (SSL-Interception)",
+          "kind": "fn"
+        },
+        {
+          "n": 82,
+          "title": "App-Signatur (MD5/SHA256-Fingerprint)",
+          "kind": "ask"
+        },
+        {
+          "n": 83,
+          "title": "Debuggable-Apps scannen",
+          "kind": "fn"
+        },
+        {
+          "n": 84,
+          "title": "App-Sandbox-Rechte prüfen",
+          "kind": "ask"
+        },
+        {
+          "n": 85,
+          "title": "SELinux Enforcing/Permissive",
+          "kind": "cmd"
+        },
+        {
+          "n": 86,
+          "title": "Keystore / StrongBox-Status (TEE)",
+          "kind": "cmd"
+        },
+        {
+          "n": 87,
+          "title": "SecurityLog dumpen",
+          "kind": "rootcmd"
+        },
+        {
+          "n": 88,
+          "title": "Intent-Fuzzing (App crashen)",
+          "kind": "fn"
+        },
+        {
+          "n": 89,
+          "title": "Backup-Flag-Audit (allowBackup)",
+          "kind": "cmd"
+        },
+        {
+          "n": 90,
+          "title": "Overlay/Clickjacking-Anfälligkeit",
+          "kind": "cmd"
+        }
+      ]
+    },
+    {
+      "cat": 10,
+      "icon": "🧠",
+      "name": "Deep-OS Controls & versteckte Features",
+      "features": [
+        {
+          "n": 91,
+          "title": "Gast-/Zweitprofil erstellen",
+          "kind": "ask"
+        },
+        {
+          "n": 92,
+          "title": "Nicht-Stören (DND) konfigurieren",
+          "kind": "cmd"
+        },
+        {
+          "n": 93,
+          "title": "App auf SD verschieben erzwingen",
+          "kind": "ask"
+        },
+        {
+          "n": 94,
+          "title": "Standard-Apps neu zuweisen",
+          "kind": "cmd"
+        },
+        {
+          "n": 95,
+          "title": "HDMI/MHL-Display-Ausgabe prüfen",
+          "kind": "cmd"
+        },
+        {
+          "n": 96,
+          "title": "Helligkeits-/Auto-Brightness anpassen",
+          "kind": "ask"
+        },
+        {
+          "n": 97,
+          "title": "Lockscreen-Widgets / versteckte UI",
+          "kind": "info"
+        },
+        {
+          "n": 98,
+          "title": "System-Update-Check blockieren",
+          "kind": "ask"
+        },
+        {
+          "n": 99,
+          "title": "Boot-Animation ändern",
+          "kind": "info"
+        },
+        {
+          "n": 100,
+          "title": "Factory Reset (Werkseinstellungen)",
+          "kind": "danger"
+        }
+      ]
+    },
+    {
+      "cat": 11,
+      "icon": "💳",
+      "name": "eSIM-Profile & eUICC-Architektur",
+      "features": [
+        {
+          "n": 101,
+          "title": "eSIM-Fähigkeit prüfen",
+          "kind": "cmd"
+        },
+        {
+          "n": 102,
+          "title": "EID auslesen",
+          "kind": "cmd"
+        },
+        {
+          "n": 103,
+          "title": "Installierte eSIM-Profile auflisten",
+          "kind": "cmd"
+        },
+        {
+          "n": 104,
+          "title": "Aktives eSIM-Profil umschalten",
+          "kind": "info"
+        },
+        {
+          "n": 105,
+          "title": "eSIM-Profil löschen",
+          "kind": "info"
+        },
+        {
+          "n": 106,
+          "title": "LPA (Local Profile Assistant) starten",
+          "kind": "cmd"
+        },
+        {
+          "n": 107,
+          "title": "SM-DP+ Serveradresse auslesen",
+          "kind": "cmd"
+        },
+        {
+          "n": 108,
+          "title": "eSIM-Aktivierungscode (LPA-Intent)",
+          "kind": "ask"
+        },
+        {
+          "n": 109,
+          "title": "eUICC-OS-Version auslesen",
+          "kind": "cmd"
+        },
+        {
+          "n": 110,
+          "title": "eSIM-Speicherplatz (Metadaten)",
+          "kind": "cmd"
+        }
+      ]
+    },
+    {
+      "cat": 12,
+      "icon": "🗂️",
+      "name": "Physische SIM-Hardware & Slot-Status",
+      "features": [
+        {
+          "n": 111,
+          "title": "Slot-Belegung (Multi-SIM)",
+          "kind": "cmd"
+        },
+        {
+          "n": 112,
+          "title": "SIM-Status (READY/ABSENT/LOCKED)",
+          "kind": "cmd"
+        },
+        {
+          "n": 113,
+          "title": "ICCID auslesen",
+          "kind": "cmd"
+        },
+        {
+          "n": 114,
+          "title": "SIM-Hersteller (über ICCID-Präfix)",
+          "kind": "info"
+        },
+        {
+          "n": 115,
+          "title": "SIM-Spannungsklasse (1.8/3/5V)",
+          "kind": "sdr"
+        },
+        {
+          "n": 116,
+          "title": "SIM-Hot-Plug überwachen",
+          "kind": "fn"
+        },
+        {
+          "n": 117,
+          "title": "DSDS-Status (Dual-Standby)",
+          "kind": "cmd"
+        },
+        {
+          "n": 118,
+          "title": "DSDA-Validierung (Dual-Active)",
+          "kind": "cmd"
+        },
+        {
+          "n": 119,
+          "title": "SIM-Adapter-Erkennung (Timing)",
+          "kind": "info"
+        },
+        {
+          "n": 120,
+          "title": "Kontaktfehler/Mikrounterbrechungen loggen",
+          "kind": "fn"
+        }
+      ]
+    },
+    {
+      "cat": 13,
+      "icon": "🔐",
+      "name": "SIM-Sicherheit, PIN, PUK & Sperren",
+      "features": [
+        {
+          "n": 121,
+          "title": "PIN-Status abfragen",
+          "kind": "cmd"
+        },
+        {
+          "n": 122,
+          "title": "PIN-Eingabe automatisieren",
+          "kind": "info"
+        },
+        {
+          "n": 123,
+          "title": "Verbleibende PIN-Versuche",
+          "kind": "rootcmd"
+        },
+        {
+          "n": 124,
+          "title": "Verbleibende PUK-Versuche",
+          "kind": "rootcmd"
+        },
+        {
+          "n": 125,
+          "title": "Netzbetreiber-Sperre (SIM-Lock) prüfen",
+          "kind": "cmd"
+        },
+        {
+          "n": 126,
+          "title": "FPLMN-Liste (verbotene Netze)",
+          "kind": "sdr"
+        },
+        {
+          "n": 127,
+          "title": "Lock-Typ (Network/SP/Corporate)",
+          "kind": "cmd"
+        },
+        {
+          "n": 128,
+          "title": "SIM-PIN deaktivieren",
+          "kind": "info"
+        },
+        {
+          "n": 129,
+          "title": "SIM-PIN ändern",
+          "kind": "info"
+        },
+        {
+          "n": 130,
+          "title": "Krypto-Challenge an SIM (EAP-AKA)",
+          "kind": "sdr"
+        }
+      ]
+    },
+    {
+      "cat": 14,
+      "icon": "📡",
+      "name": "Netzbetreiber-Konfiguration & IMS",
+      "features": [
+        {
+          "n": 131,
+          "title": "IMSI auslesen",
+          "kind": "rootcmd"
+        },
+        {
+          "n": 132,
+          "title": "Carrier-Config ID",
+          "kind": "cmd"
+        },
+        {
+          "n": 133,
+          "title": "VoLTE-Status",
+          "kind": "cmd"
+        },
+        {
+          "n": 134,
+          "title": "VoWiFi / Wi-Fi Calling Status",
+          "kind": "cmd"
+        },
+        {
+          "n": 135,
+          "title": "APN-Datenbank auslesen",
+          "kind": "cmd"
+        },
+        {
+          "n": 136,
+          "title": "APN-Injektion (neuen APN schreiben)",
+          "kind": "ask"
+        },
+        {
+          "n": 137,
+          "title": "SMSC (SMS-Center-Nummer)",
+          "kind": "cmd"
+        },
+        {
+          "n": 138,
+          "title": "RCS-Status (Rich Communication)",
+          "kind": "cmd"
+        },
+        {
+          "n": 139,
+          "title": "Netzwerk-Auswahlmodus (auto/manuell)",
+          "kind": "cmd"
+        },
+        {
+          "n": 140,
+          "title": "Roaming-Erlaubnis schalten",
+          "kind": "ask"
+        }
+      ]
+    },
+    {
+      "cat": 15,
+      "icon": "💾",
+      "name": "SIM-Speicher & forensische Daten",
+      "features": [
+        {
+          "n": 141,
+          "title": "SIM-Telefonbuch (ADN) auslesen",
+          "kind": "cmd"
+        },
+        {
+          "n": 142,
+          "title": "SIM-SMS-Speicher dumpen",
+          "kind": "rootcmd"
+        },
+        {
+          "n": 143,
+          "title": "Letzte Funkzelle (LOCI)",
+          "kind": "sdr"
+        },
+        {
+          "n": 144,
+          "title": "MSISDN (eigene Rufnummer)",
+          "kind": "cmd"
+        },
+        {
+          "n": 145,
+          "title": "Service Dialing Numbers (SDN)",
+          "kind": "cmd"
+        },
+        {
+          "n": 146,
+          "title": "SIM-Dateisystem (EF/DF) navigieren",
+          "kind": "sdr"
+        },
+        {
+          "n": 147,
+          "title": "FDN (Fixed Dialing) aktivieren",
+          "kind": "info"
+        },
+        {
+          "n": 148,
+          "title": "USIM-Anwendungsmanager",
+          "kind": "sdr"
+        },
+        {
+          "n": 149,
+          "title": "OTA-SIM-Updates loggen",
+          "kind": "fn"
+        },
+        {
+          "n": 150,
+          "title": "SIM-Alter über ICCID schätzen",
+          "kind": "info"
+        }
+      ]
+    },
+    {
+      "cat": 16,
+      "icon": "📡",
+      "name": "Baseband, Modem & AT-Kommandos",
+      "features": [
+        {
+          "n": 151,
+          "title": "AT-Kommando-Brücke öffnen",
+          "kind": "sdr"
+        },
+        {
+          "n": 152,
+          "title": "SIM-Reset / Warm-Boot (AT+CFUN=1,1)",
+          "kind": "sdr"
+        },
+        {
+          "n": 153,
+          "title": "Modem-Firmware-Version",
+          "kind": "cmd"
+        },
+        {
+          "n": 154,
+          "title": "Radio-Logcat streamen",
+          "kind": "fn"
+        },
+        {
+          "n": 155,
+          "title": "Modem-Crash erzwingen (RAM-Dump)",
+          "kind": "danger"
+        },
+        {
+          "n": 156,
+          "title": "NV-Items auslesen (Qualcomm/MTK)",
+          "kind": "sdr"
+        },
+        {
+          "n": 157,
+          "title": "RF-Kalibrierungsdaten dumpen",
+          "kind": "rootcmd"
+        },
+        {
+          "n": 158,
+          "title": "Diag-Port freischalten (QXDM)",
+          "kind": "rootcmd"
+        },
+        {
+          "n": 159,
+          "title": "Frequenzband-Lock (Band Locking)",
+          "kind": "sdr"
+        },
+        {
+          "n": 160,
+          "title": "Baseband-Uptime prüfen",
+          "kind": "cmd"
+        }
+      ]
+    },
+    {
+      "cat": 17,
+      "icon": "🕵️",
+      "name": "IMSI-Catcher-Schutz & Funkzellen",
+      "features": [
+        {
+          "n": 161,
+          "title": "Cell-ID Live-Tracker (MCC/MNC/LAC/CID)",
+          "kind": "fn"
+        },
+        {
+          "n": 162,
+          "title": "Nachbarzellen-Analyse",
+          "kind": "fn"
+        },
+        {
+          "n": 163,
+          "title": "Verschlüsselungsstatus der Zelle",
+          "kind": "sdr"
+        },
+        {
+          "n": 164,
+          "title": "Silent-SMS (Typ 0) Detektor",
+          "kind": "fn"
+        },
+        {
+          "n": 165,
+          "title": "Timing-Advance (Distanz zum Mast)",
+          "kind": "cmd"
+        },
+        {
+          "n": 166,
+          "title": "Downgrade-Warnung (4G/5G→2G)",
+          "kind": "fn"
+        },
+        {
+          "n": 167,
+          "title": "Fake-Zellen-Abgleich (BNetzA-API)",
+          "kind": "info"
+        },
+        {
+          "n": 168,
+          "title": "Paging-Channel / TMSI überwachen",
+          "kind": "sdr"
+        },
+        {
+          "n": 169,
+          "title": "SINR / Signalqualität (Jamming)",
+          "kind": "cmd"
+        },
+        {
+          "n": 170,
+          "title": "Ciphering-Indicator erzwingen",
+          "kind": "info"
+        }
+      ]
+    },
+    {
+      "cat": 18,
+      "icon": "🔒",
+      "name": "SIM-Dateisystem & Krypto-Operationen",
+      "features": [
+        {
+          "n": 171,
+          "title": "EF_IMSI lesen/modifizieren",
+          "kind": "sdr"
+        },
+        {
+          "n": 172,
+          "title": "Ki-Schlüssel extrahieren (COMP128v1)",
+          "kind": "danger"
+        },
+        {
+          "n": 173,
+          "title": "Auth-Algorithmus triggern (RAND→SRES)",
+          "kind": "sdr"
+        },
+        {
+          "n": 174,
+          "title": "PLMN-Selector ändern",
+          "kind": "sdr"
+        },
+        {
+          "n": 175,
+          "title": "STK-Applet-Injektion (Java Card)",
+          "kind": "sdr"
+        },
+        {
+          "n": 176,
+          "title": "Akkustand-Übertragung an SIM blocken",
+          "kind": "info"
+        },
+        {
+          "n": 177,
+          "title": "EF_SMS-Sicherheitszonen analysieren",
+          "kind": "sdr"
+        },
+        {
+          "n": 178,
+          "title": "SIM-Dateibaum dumpen (DF_TELECOM/GSM)",
+          "kind": "sdr"
+        },
+        {
+          "n": 179,
+          "title": "SIM-Cache im OS leeren",
+          "kind": "cmd"
+        },
+        {
+          "n": 180,
+          "title": "Hardware-RNG der SIM anzapfen",
+          "kind": "sdr"
+        }
+      ]
+    },
+    {
+      "cat": 19,
+      "icon": "🌍",
+      "name": "eSIM-Sicherheitsarchitektur & LPA",
+      "features": [
+        {
+          "n": 181,
+          "title": "eSIM-Zertifikatskette (GSMA-Root) prüfen",
+          "kind": "cmd"
+        },
+        {
+          "n": 182,
+          "title": "SM-DS (Discovery Server) abfragen",
+          "kind": "info"
+        },
+        {
+          "n": 183,
+          "title": "Carrier-Privileges entziehen",
+          "kind": "cmd"
+        },
+        {
+          "n": 184,
+          "title": "eSIM-Metadaten-Verschlüsselung prüfen",
+          "kind": "info"
+        },
+        {
+          "n": 185,
+          "title": "eSIM-Profil-Isolation testen",
+          "kind": "info"
+        },
+        {
+          "n": 186,
+          "title": "Test-Zertifikate erzwingen",
+          "kind": "sdr"
+        },
+        {
+          "n": 187,
+          "title": "eSIM-Aktivierungs-Log dumpen",
+          "kind": "cmd"
+        },
+        {
+          "n": 188,
+          "title": "LPA-App-Sandbox auditieren",
+          "kind": "ask"
+        },
+        {
+          "n": 189,
+          "title": "eSIM-Remote-Wipe simulieren",
+          "kind": "info"
+        },
+        {
+          "n": 190,
+          "title": "EID-Hardware-Abgleich (Anti-Spoofing)",
+          "kind": "info"
+        }
+      ]
+    },
+    {
+      "cat": 20,
+      "icon": "🛠️",
+      "name": "Forensische Mobilfunk-Tools",
+      "features": [
+        {
+          "n": 191,
+          "title": "Gelöschte SIM-Kontakte rekonstruieren",
+          "kind": "sdr"
+        },
+        {
+          "n": 192,
+          "title": "SMS-Status-Report-Metadaten",
+          "kind": "rootcmd"
+        },
+        {
+          "n": 193,
+          "title": "Emergency-Call-Only erzwingen",
+          "kind": "danger"
+        },
+        {
+          "n": 194,
+          "title": "Modem-Partition flashen",
+          "kind": "info"
+        },
+        {
+          "n": 195,
+          "title": "IMEI-Validierung (Gehäuse vs. Modem)",
+          "kind": "cmd"
+        },
+        {
+          "n": 196,
+          "title": "SIM-Stromaufnahme messen",
+          "kind": "sdr"
+        },
+        {
+          "n": 197,
+          "title": "Multi-IMSI-Karten erkennen",
+          "kind": "fn"
+        },
+        {
+          "n": 198,
+          "title": "LTE-Protokoll-Stack-Dump (L1-L3)",
+          "kind": "sdr"
+        },
+        {
+          "n": 199,
+          "title": "VoLTE-Schlüssel aus RAM ziehen",
+          "kind": "danger"
+        },
+        {
+          "n": 200,
+          "title": "Radio-Kill-Switch (Funk physisch aus)",
+          "kind": "ask"
+        }
+      ]
+    },
+    {
+      "cat": 21,
+      "icon": "📶",
+      "name": "Advanced 5G & Next-Gen Signal",
+      "features": [
+        {
+          "n": 201,
+          "title": "5G SA vs. NSA validieren",
+          "kind": "cmd"
+        },
+        {
+          "n": 202,
+          "title": "MIMO-Layer auslesen",
+          "kind": "cmd"
+        },
+        {
+          "n": 203,
+          "title": "mmWave-Detektion",
+          "kind": "cmd"
+        },
+        {
+          "n": 204,
+          "title": "Beamforming-Index",
+          "kind": "sdr"
+        },
+        {
+          "n": 205,
+          "title": "Network-Slicing-Konfiguration",
+          "kind": "cmd"
+        },
+        {
+          "n": 206,
+          "title": "Carrier-Aggregation-Kombis",
+          "kind": "cmd"
+        },
+        {
+          "n": 207,
+          "title": "5G-SA-only erzwingen",
+          "kind": "info"
+        },
+        {
+          "n": 208,
+          "title": "Sub-6 GHz Frequenz (MHz) auslesen",
+          "kind": "cmd"
+        },
+        {
+          "n": 209,
+          "title": "Doppler-Kompensation loggen",
+          "kind": "sdr"
+        },
+        {
+          "n": 210,
+          "title": "VoNR (Voice over New Radio) prüfen",
+          "kind": "cmd"
+        }
+      ]
+    },
+    {
+      "cat": 22,
+      "icon": "🛰️",
+      "name": "Satelliten-Kommunikation (NTN) & Notfall",
+      "features": [
+        {
+          "n": 211,
+          "title": "NTN-Status prüfen",
+          "kind": "cmd"
+        },
+        {
+          "n": 212,
+          "title": "Satelliten-Signalstärke (CNR)",
+          "kind": "cmd"
+        },
+        {
+          "n": 213,
+          "title": "Ephemeridendaten-Dump",
+          "kind": "sdr"
+        },
+        {
+          "n": 214,
+          "title": "Satelliten-SOS-Testmodus",
+          "kind": "info"
+        },
+        {
+          "n": 215,
+          "title": "Dunkelphasen-Log (Verbindungsverlust)",
+          "kind": "fn"
+        },
+        {
+          "n": 216,
+          "title": "Ausrichtungshilfe (Gyro-Rohdaten)",
+          "kind": "cmd"
+        },
+        {
+          "n": 217,
+          "title": "Satelliten-Funk-Schlüssel",
+          "kind": "sdr"
+        },
+        {
+          "n": 218,
+          "title": "Cellular↔Satellite Handover",
+          "kind": "fn"
+        },
+        {
+          "n": 219,
+          "title": "ETWS (Erdbeben/Tsunami) abfangen",
+          "kind": "fn"
+        },
+        {
+          "n": 220,
+          "title": "WEA (Notfall-Broadcast) Config",
+          "kind": "cmd"
+        }
+      ]
+    },
+    {
+      "cat": 23,
+      "icon": "🔐",
+      "name": "Baseband-Exploits & Speicher-Dumps",
+      "features": [
+        {
+          "n": 221,
+          "title": "Modem-RAM Live-Streaming (DMA)",
+          "kind": "sdr"
+        },
+        {
+          "n": 222,
+          "title": "Heap-Overflow-Fuzzing am Modem",
+          "kind": "danger"
+        },
+        {
+          "n": 223,
+          "title": "Modem-Bootloader (PBL) Status",
+          "kind": "sdr"
+        },
+        {
+          "n": 224,
+          "title": "TrustZone↔Modem-Interface",
+          "kind": "sdr"
+        },
+        {
+          "n": 225,
+          "title": "Modem-Crashtext (PC/LR-Register)",
+          "kind": "rootcmd"
+        },
+        {
+          "n": 226,
+          "title": "Modem-Sicherheits-Patch-Stand",
+          "kind": "cmd"
+        },
+        {
+          "n": 227,
+          "title": "Firmware-Signaturprüfung umgehen",
+          "kind": "sdr"
+        },
+        {
+          "n": 228,
+          "title": "Modem-Symboltabellen extrahieren",
+          "kind": "sdr"
+        },
+        {
+          "n": 229,
+          "title": "Stack-Canary im Baseband prüfen",
+          "kind": "sdr"
+        },
+        {
+          "n": 230,
+          "title": "Modem-SRAM-Integrität (Bit-Flips)",
+          "kind": "sdr"
+        }
+      ]
+    },
+    {
+      "cat": 24,
+      "icon": "💳",
+      "name": "Krypto-Keys & SIM-Hardware-Forensik",
+      "features": [
+        {
+          "n": 231,
+          "title": "KASUMI/SNOW-3G-Status",
+          "kind": "sdr"
+        },
+        {
+          "n": 232,
+          "title": "RAND/SRES-Paare sammeln",
+          "kind": "sdr"
+        },
+        {
+          "n": 233,
+          "title": "SIM-Taktfrequenz ändern",
+          "kind": "sdr"
+        },
+        {
+          "n": 234,
+          "title": "EF_DIR auslesen (Krypto-Apps)",
+          "kind": "sdr"
+        },
+        {
+          "n": 235,
+          "title": "PIN-Brute-Force (Test-SIM)",
+          "kind": "danger"
+        },
+        {
+          "n": 236,
+          "title": "PUK-Aufsperrung automatisieren",
+          "kind": "info"
+        },
+        {
+          "n": 237,
+          "title": "ATR (Answer to Reset) auslesen",
+          "kind": "sdr"
+        },
+        {
+          "n": 238,
+          "title": "SIM-Spannungs-Drop loggen",
+          "kind": "sdr"
+        },
+        {
+          "n": 239,
+          "title": "EF_PL (bevorzugte Sprache)",
+          "kind": "sdr"
+        },
+        {
+          "n": 240,
+          "title": "SIM-Schreibschutz-Audit",
+          "kind": "sdr"
+        }
+      ]
+    },
+    {
+      "cat": 25,
+      "icon": "🌍",
+      "name": "eSIM Remote-Provisioning & GSMA",
+      "features": [
+        {
+          "n": 241,
+          "title": "ES2+-Schnittstelle emulieren",
+          "kind": "info"
+        },
+        {
+          "n": 242,
+          "title": "GSMA SGP.22 Konformitätstest",
+          "kind": "info"
+        },
+        {
+          "n": 243,
+          "title": "eUICC-Zertifikat-CRL abgleichen",
+          "kind": "cmd"
+        },
+        {
+          "n": 244,
+          "title": "eSIM ECDSA-Signaturen extrahieren",
+          "kind": "sdr"
+        },
+        {
+          "n": 245,
+          "title": "eSIM-Profil-Key-Check (AES-GCM)",
+          "kind": "info"
+        },
+        {
+          "n": 246,
+          "title": "SM-DP+ Server-Zertifikat prüfen",
+          "kind": "info"
+        },
+        {
+          "n": 247,
+          "title": "eSIM-Downgrade-Schutz testen",
+          "kind": "info"
+        },
+        {
+          "n": 248,
+          "title": "eUICC-Speicher defragmentieren",
+          "kind": "info"
+        },
+        {
+          "n": 249,
+          "title": "Lock-to-Carrier aushebeln",
+          "kind": "info"
+        },
+        {
+          "n": 250,
+          "title": "EID↔TEE-Hardware-Validierung",
+          "kind": "info"
+        }
+      ]
+    },
+    {
+      "cat": 26,
+      "icon": "📞",
+      "name": "IMS & VoLTE/VoWiFi Protokoll-Analyse",
+      "features": [
+        {
+          "n": 251,
+          "title": "SIP-Registrierung sniffen",
+          "kind": "fn"
+        },
+        {
+          "n": 252,
+          "title": "IPSec-Tunnel (VoWiFi) überwachen",
+          "kind": "cmd"
+        },
+        {
+          "n": 253,
+          "title": "XCAP-Server abfragen",
+          "kind": "cmd"
+        },
+        {
+          "n": 254,
+          "title": "IMS-Registrierungsstatus",
+          "kind": "cmd"
+        },
+        {
+          "n": 255,
+          "title": "RTP-Paketverlust-Monitor",
+          "kind": "cmd"
+        },
+        {
+          "n": 256,
+          "title": "Codec-Aushandlung (AMR-WB/EVS)",
+          "kind": "cmd"
+        },
+        {
+          "n": 257,
+          "title": "P-Associated-URI extrahieren",
+          "kind": "rootcmd"
+        },
+        {
+          "n": 258,
+          "title": "IMS-Auth-Fehler isolieren",
+          "kind": "fn"
+        },
+        {
+          "n": 259,
+          "title": "VoWiFi-Präferenz erzwingen",
+          "kind": "cmd"
+        },
+        {
+          "n": 260,
+          "title": "rmnet_data0-Schnittstelle dumpen",
+          "kind": "cmd"
+        }
+      ]
+    },
+    {
+      "cat": 27,
+      "icon": "🕵️",
+      "name": "Anti-Tracking, Privacy & STK-Defense",
+      "features": [
+        {
+          "n": 261,
+          "title": "STK-Befehls-Blocker",
+          "kind": "cmd"
+        },
+        {
+          "n": 262,
+          "title": "IMEI-Übertragung unterdrücken",
+          "kind": "info"
+        },
+        {
+          "n": 263,
+          "title": "TMSI-Rotation erzwingen",
+          "kind": "ask"
+        },
+        {
+          "n": 264,
+          "title": "Location-Update-Intervall ändern",
+          "kind": "sdr"
+        },
+        {
+          "n": 265,
+          "title": "Modem-Sleep erzwingen",
+          "kind": "info"
+        },
+        {
+          "n": 266,
+          "title": "SIM-Tracking-Log analysieren",
+          "kind": "cmd"
+        },
+        {
+          "n": 267,
+          "title": "BIP-Monitor (heimlicher SIM-Traffic)",
+          "kind": "fn"
+        },
+        {
+          "n": 268,
+          "title": "Wi-Fi-MAC vor SIM verstecken",
+          "kind": "info"
+        },
+        {
+          "n": 269,
+          "title": "Zellselektions-Hysterese ändern",
+          "kind": "sdr"
+        },
+        {
+          "n": 270,
+          "title": "5G-SUCI/SUPI-Verschleierung prüfen",
+          "kind": "cmd"
+        }
+      ]
+    },
+    {
+      "cat": 28,
+      "icon": "⚡",
+      "name": "RF-Stresstests, Jamming & Hardware",
+      "features": [
+        {
+          "n": 271,
+          "title": "RSRP Grid-Mapping (Signalstärkekarte)",
+          "kind": "cmd"
+        },
+        {
+          "n": 272,
+          "title": "RSRQ-Qualitäts-Logger",
+          "kind": "cmd"
+        },
+        {
+          "n": 273,
+          "title": "RSSI-Jamming-Alarm",
+          "kind": "fn"
+        },
+        {
+          "n": 274,
+          "title": "Antennen-Diversity-Status",
+          "kind": "sdr"
+        },
+        {
+          "n": 275,
+          "title": "TX-Power-Monitor",
+          "kind": "sdr"
+        },
+        {
+          "n": 276,
+          "title": "SAR-Wert Live-Schätzung",
+          "kind": "info"
+        },
+        {
+          "n": 277,
+          "title": "Modem-Temperatur-Alarm",
+          "kind": "cmd"
+        },
+        {
+          "n": 278,
+          "title": "Uplink-Blockierungs-Detektor",
+          "kind": "cmd"
+        },
+        {
+          "n": 279,
+          "title": "CQI-Tracker",
+          "kind": "cmd"
+        },
+        {
+          "n": 280,
+          "title": "BLER-Monitor (Block Error Rate)",
+          "kind": "cmd"
+        }
+      ]
+    },
+    {
+      "cat": 29,
+      "icon": "🔀",
+      "name": "Multi-SIM-Routing & virtuelle Modems",
+      "features": [
+        {
+          "n": 281,
+          "title": "Datenverbindung Slot wechseln",
+          "kind": "ask"
+        },
+        {
+          "n": 282,
+          "title": "Cross-Data-Kompensation",
+          "kind": "info"
+        },
+        {
+          "n": 283,
+          "title": "Virtuelles SIM-Injektions-Interface",
+          "kind": "info"
+        },
+        {
+          "n": 284,
+          "title": "Multi-SIM SMS-Gateway (→ Bot)",
+          "kind": "info"
+        },
+        {
+          "n": 285,
+          "title": "IMEI-Mapping pro Slot",
+          "kind": "cmd"
+        },
+        {
+          "n": 286,
+          "title": "Default-Voice-Slot wechseln",
+          "kind": "ask"
+        },
+        {
+          "n": 287,
+          "title": "EFS pro Slot sichern",
+          "kind": "rootcmd"
+        },
+        {
+          "n": 288,
+          "title": "SIM-Präsenz simulieren (ohne Karte)",
+          "kind": "info"
+        },
+        {
+          "n": 289,
+          "title": "Einzelnen Slot abschalten",
+          "kind": "ask"
+        },
+        {
+          "n": 290,
+          "title": "Modem-Subsystem-Reboot",
+          "kind": "rootcmd"
+        }
+      ]
+    },
+    {
+      "cat": 30,
+      "icon": "💾",
+      "name": "Forensische NVRAM-Analyse",
+      "features": [
+        {
+          "n": 291,
+          "title": "IMEI-Prüfsumme (Luhn) validieren",
+          "kind": "info"
+        },
+        {
+          "n": 292,
+          "title": "MEID (CDMA) extrahieren",
+          "kind": "cmd"
+        },
+        {
+          "n": 293,
+          "title": "MTK /nvram dumpen",
+          "kind": "rootcmd"
+        },
+        {
+          "n": 294,
+          "title": "RF-Band-Capability-Bitmask",
+          "kind": "cmd"
+        },
+        {
+          "n": 295,
+          "title": "Field-Test-Mode öffnen",
+          "kind": "cmd"
+        },
+        {
+          "n": 296,
+          "title": "Modem-Hardware-Revision auslesen",
+          "kind": "cmd"
+        },
+        {
+          "n": 297,
+          "title": "Provider-Namen spoofen (SPN)",
+          "kind": "rootcmd"
+        },
+        {
+          "n": 298,
+          "title": "SMS-Zustelltyp umschalten",
+          "kind": "sdr"
+        },
+        {
+          "n": 299,
+          "title": "telephony.registry-Zustand sichern",
+          "kind": "cmd"
+        },
+        {
+          "n": 300,
+          "title": "(NVRAM-Snapshot gesamt)",
+          "kind": "rootcmd"
+        }
+      ]
+    },
+    {
+      "cat": 31,
+      "icon": "🧪",
+      "name": "Virtuelle SIM-Emulation & SD-Modems",
+      "features": [
+        {
+          "n": 301,
+          "title": "vSIM-Injektion (Software-Profil)",
+          "kind": "info"
+        },
+        {
+          "n": 302,
+          "title": "SDR-Baseband-Faking (HackRF)",
+          "kind": "sdr"
+        },
+        {
+          "n": 303,
+          "title": "Null-IMSI-Modus",
+          "kind": "info"
+        },
+        {
+          "n": 304,
+          "title": "SIM-over-IP (Remote-SIM)",
+          "kind": "info"
+        },
+        {
+          "n": 305,
+          "title": "Modem-Loopback-Test",
+          "kind": "sdr"
+        },
+        {
+          "n": 306,
+          "title": "Multi-Operator-Profiling",
+          "kind": "info"
+        },
+        {
+          "n": 307,
+          "title": "APDU-Fuzzer",
+          "kind": "sdr"
+        },
+        {
+          "n": 308,
+          "title": "Baseband-Isolation-Check",
+          "kind": "info"
+        },
+        {
+          "n": 309,
+          "title": "Emulierte STK-Menüs injizieren",
+          "kind": "info"
+        },
+        {
+          "n": 310,
+          "title": "Virtueller Handover-Stresstest",
+          "kind": "sdr"
+        }
+      ]
+    },
+    {
+      "cat": 32,
+      "icon": "🕵️",
+      "name": "Krypto-Anomalien & logische SIM-Angriffe",
+      "features": [
+        {
+          "n": 311,
+          "title": "COMP128-Schwachstellen-Scanner",
+          "kind": "info"
+        },
+        {
+          "n": 312,
+          "title": "Replay-Angriff auf OTA-SMS",
+          "kind": "danger"
+        },
+        {
+          "n": 313,
+          "title": "SIM-Wakelock-Draining",
+          "kind": "danger"
+        },
+        {
+          "n": 314,
+          "title": "RAND-Spoofing (Netz-Challenge)",
+          "kind": "sdr"
+        },
+        {
+          "n": 315,
+          "title": "IMEI-Klon-Detektor (Timing)",
+          "kind": "info"
+        },
+        {
+          "n": 316,
+          "title": "Suicide-Script für Test-SIM",
+          "kind": "danger"
+        },
+        {
+          "n": 317,
+          "title": "OTA-Key (TAR)-Audit",
+          "kind": "sdr"
+        },
+        {
+          "n": 318,
+          "title": "Any-Time-Interrogation (ATI) Blocker",
+          "kind": "info"
+        },
+        {
+          "n": 319,
+          "title": "MitM RIL↔Modem-Dumper",
+          "kind": "rootcmd"
+        },
+        {
+          "n": 320,
+          "title": "SIM-SMS-Speicher-Overflow-Test",
+          "kind": "danger"
+        }
+      ]
+    },
+    {
+      "cat": 33,
+      "icon": "🌐",
+      "name": "Virtuelles IMS- & Betreiber-Spoofing",
+      "features": [
+        {
+          "n": 321,
+          "title": "Virtuelle APN-Isolierung (Ad-Block-APN)",
+          "kind": "ask"
+        },
+        {
+          "n": 322,
+          "title": "IMS-Identity-Spoofing-Test",
+          "kind": "danger"
+        },
+        {
+          "n": 323,
+          "title": "Gefälschte VoWiFi-Zertifikate",
+          "kind": "danger"
+        },
+        {
+          "n": 324,
+          "title": "RCS-Malware-Sandbox",
+          "kind": "info"
+        },
+        {
+          "n": 325,
+          "title": "Virtueller SMSC-Wechsel",
+          "kind": "info"
+        },
+        {
+          "n": 326,
+          "title": "Emergency-Call-Spoofing-Audit",
+          "kind": "danger"
+        },
+        {
+          "n": 327,
+          "title": "Roaming-Tarif-Simulator",
+          "kind": "info"
+        },
+        {
+          "n": 328,
+          "title": "XCAP-Konfig-Injektor",
+          "kind": "danger"
+        },
+        {
+          "n": 329,
+          "title": "SIP-BYE-Fuzzer",
+          "kind": "danger"
+        },
+        {
+          "n": 330,
+          "title": "Unverschlüsseltes VoLTE erzwingen",
+          "kind": "danger"
+        }
+      ]
+    },
+    {
+      "cat": 34,
+      "icon": "🕵️",
+      "name": "Forensische SIM-Extraktion & Tracker-Jagd",
+      "features": [
+        {
+          "n": 331,
+          "title": "Historischer LOCI-Dump",
+          "kind": "sdr"
+        },
+        {
+          "n": 332,
+          "title": "Versteckte SPN auslesen",
+          "kind": "cmd"
+        },
+        {
+          "n": 333,
+          "title": "PLMN-Netzprioritäten auslesen",
+          "kind": "sdr"
+        },
+        {
+          "n": 334,
+          "title": "BIP-Traffic-Sniffer",
+          "kind": "fn"
+        },
+        {
+          "n": 335,
+          "title": "SIM-Telefonbuch-Metadaten",
+          "kind": "cmd"
+        },
+        {
+          "n": 336,
+          "title": "EF_TST (Test-Flags) prüfen",
+          "kind": "sdr"
+        },
+        {
+          "n": 337,
+          "title": "TMSI-Lebensdauer-Tracker",
+          "kind": "fn"
+        },
+        {
+          "n": 338,
+          "title": "SIM-Alter über ICCID",
+          "kind": "info"
+        },
+        {
+          "n": 339,
+          "title": "FDN-Audit",
+          "kind": "cmd"
+        },
+        {
+          "n": 340,
+          "title": "SIM-Prozess-RAM-Analyse",
+          "kind": "rootcmd"
+        }
+      ]
+    },
+    {
+      "cat": 35,
+      "icon": "🛠️",
+      "name": "Advanced Baseband-Kontrolle & Radio-Modding",
+      "features": [
+        {
+          "n": 341,
+          "title": "Virtueller Radio-Freeze",
+          "kind": "danger"
+        },
+        {
+          "n": 342,
+          "title": "Modem-Bandbreiten-Limiter",
+          "kind": "sdr"
+        },
+        {
+          "n": 343,
+          "title": "GSM-Only im Standby erzwingen",
+          "kind": "cmd"
+        },
+        {
+          "n": 344,
+          "title": "Modem-Leistungsprofil umschalten",
+          "kind": "sdr"
+        },
+        {
+          "n": 345,
+          "title": "SIM-Ziehen im Gespräch testen",
+          "kind": "danger"
+        },
+        {
+          "n": 346,
+          "title": "Sendeleistung begrenzen (SAR-Tweak)",
+          "kind": "sdr"
+        },
+        {
+          "n": 347,
+          "title": "Modem-Crash-Log sichern",
+          "kind": "rootcmd"
+        },
+        {
+          "n": 348,
+          "title": "Antennenpfad-Debugging",
+          "kind": "sdr"
+        },
+        {
+          "n": 349,
+          "title": "Radio-Subsystem-Hard-Reset",
+          "kind": "rootcmd"
+        },
+        {
+          "n": 350,
+          "title": "Ghost-Mode (passiver Empfang)",
+          "kind": "ask"
+        }
+      ]
+    },
+    {
+      "cat": 36,
+      "icon": "💉",
+      "name": "Virtuelle Protokoll-Injektion & OTA-Sim",
+      "features": [
+        {
+          "n": 351,
+          "title": "Virtuelle OTA-SMS injizieren",
+          "kind": "rootcmd"
+        },
+        {
+          "n": 352,
+          "title": "Gefälschtes Cell-Broadcast (Test)",
+          "kind": "info"
+        },
+        {
+          "n": 353,
+          "title": "5G-Handover-Fuzzing",
+          "kind": "sdr"
+        },
+        {
+          "n": 354,
+          "title": "Roaming-Wechsel-Sploit",
+          "kind": "info"
+        },
+        {
+          "n": 355,
+          "title": "Korrupte ASN.1/RRC-Daten injizieren",
+          "kind": "sdr"
+        },
+        {
+          "n": 356,
+          "title": "Gefälschte Netzzeit (NITZ) injizieren",
+          "kind": "info"
+        },
+        {
+          "n": 357,
+          "title": "Multi-SIM-Konflikt (gleiche IMSI)",
+          "kind": "sdr"
+        },
+        {
+          "n": 358,
+          "title": "Signal-Dämpfung im RIL erzwingen",
+          "kind": "sdr"
+        },
+        {
+          "n": 359,
+          "title": "SMS-Status-Report-Loop",
+          "kind": "danger"
+        },
+        {
+          "n": 360,
+          "title": "Emulierter eCall-Test",
+          "kind": "info"
+        }
+      ]
+    },
+    {
+      "cat": 37,
+      "icon": "🔧",
+      "name": "Deep-Baseband Memory & RIL-Hacking",
+      "features": [
+        {
+          "n": 361,
+          "title": "RIL-Daemon neu starten",
+          "kind": "rootcmd"
+        },
+        {
+          "n": 362,
+          "title": "IPC-Meldungen (AP↔BP) loggen",
+          "kind": "rootcmd"
+        },
+        {
+          "n": 363,
+          "title": "Modem-Shared-Memory-Audit",
+          "kind": "sdr"
+        },
+        {
+          "n": 364,
+          "title": "Virtuelles IMEI-Nulling (RAM)",
+          "kind": "danger"
+        },
+        {
+          "n": 365,
+          "title": "AT+CME-ERROR injizieren",
+          "kind": "sdr"
+        },
+        {
+          "n": 366,
+          "title": "Modem-Heap-Inspektion",
+          "kind": "sdr"
+        },
+        {
+          "n": 367,
+          "title": "Hex an /dev/socket/rild senden",
+          "kind": "rootcmd"
+        },
+        {
+          "n": 368,
+          "title": "Low-Power-UART erzwingen",
+          "kind": "sdr"
+        },
+        {
+          "n": 369,
+          "title": "Baseband-Tracing via Systrace",
+          "kind": "cmd"
+        },
+        {
+          "n": 370,
+          "title": "radio-Socket-Rechte auditieren",
+          "kind": "cmd"
+        }
+      ]
+    },
+    {
+      "cat": 38,
+      "icon": "🌐",
+      "name": "Erweiterte Krypto-Emulation & Klon-Forensik",
+      "features": [
+        {
+          "n": 371,
+          "title": "Milenage-Fuzzer",
+          "kind": "sdr"
+        },
+        {
+          "n": 372,
+          "title": "Klon-Erkennung (SQN-Sprung)",
+          "kind": "sdr"
+        },
+        {
+          "n": 373,
+          "title": "SRES-Metriken-Logger",
+          "kind": "sdr"
+        },
+        {
+          "n": 374,
+          "title": "USIM-Applet-Isolation testen",
+          "kind": "sdr"
+        },
+        {
+          "n": 375,
+          "title": "A5/1-Chiffrierung erzwingen",
+          "kind": "sdr"
+        },
+        {
+          "n": 376,
+          "title": "Krypto-Key-Leak im Logcat suchen",
+          "kind": "cmd"
+        },
+        {
+          "n": 377,
+          "title": "PIN-Sperren-Timing simulieren",
+          "kind": "info"
+        },
+        {
+          "n": 378,
+          "title": "APDU-Antwort manipulieren (SW1/SW2)",
+          "kind": "sdr"
+        },
+        {
+          "n": 379,
+          "title": "Krypto-Zustands-Reset",
+          "kind": "sdr"
+        },
+        {
+          "n": 380,
+          "title": "Gefälschtes GSMA-Root-Cert für LPA",
+          "kind": "danger"
+        }
+      ]
+    },
+    {
+      "cat": 39,
+      "icon": "🕵️",
+      "name": "IMS & VoLTE/VoWiFi Labor-Exploits",
+      "features": [
+        {
+          "n": 381,
+          "title": "SIP-Register-Flooding (Labor)",
+          "kind": "danger"
+        },
+        {
+          "n": 382,
+          "title": "Gefälschte P-Access-Network-Info",
+          "kind": "danger"
+        },
+        {
+          "n": 383,
+          "title": "SIP-User-Agent fuzzen",
+          "kind": "danger"
+        },
+        {
+          "n": 384,
+          "title": "RTP-Audio-Injektor",
+          "kind": "danger"
+        },
+        {
+          "n": 385,
+          "title": "IMS-AKA-Bypass-Test",
+          "kind": "danger"
+        },
+        {
+          "n": 386,
+          "title": "XCAP-Dokumenten-Fuzzer",
+          "kind": "danger"
+        },
+        {
+          "n": 387,
+          "title": "Video-Call-Codec-Wechsel",
+          "kind": "sdr"
+        },
+        {
+          "n": 388,
+          "title": "IPSec/IKEv2-Key-Logger (Labor)",
+          "kind": "rootcmd"
+        },
+        {
+          "n": 389,
+          "title": "SMS-over-IP injizieren",
+          "kind": "danger"
+        },
+        {
+          "n": 390,
+          "title": "IMS-Dienst deaktivieren (CSFB erzwingen)",
+          "kind": "cmd"
+        }
+      ]
+    },
+    {
+      "cat": 40,
+      "icon": "🛡️",
+      "name": "Advanced SIM-Toolkit (STK) & Privacy",
+      "features": [
+        {
+          "n": 391,
+          "title": "STK proactive-Command-Fuzzer",
+          "kind": "sdr"
+        },
+        {
+          "n": 392,
+          "title": "LAUNCH_BROWSER via STK blocken",
+          "kind": "cmd"
+        },
+        {
+          "n": 393,
+          "title": "SEND_SMS durch SIM überwachen",
+          "kind": "cmd"
+        },
+        {
+          "n": 394,
+          "title": "Standortrechte für SIM entziehen",
+          "kind": "cmd"
+        },
+        {
+          "n": 395,
+          "title": "STK-Menü-Hijacking",
+          "kind": "info"
+        },
+        {
+          "n": 396,
+          "title": "SET_UP_CALL via STK überwachen",
+          "kind": "cmd"
+        },
+        {
+          "n": 397,
+          "title": "STK-App komplett einfrieren",
+          "kind": "cmd"
+        },
+        {
+          "n": 398,
+          "title": "BIP-Datenkanal drosseln",
+          "kind": "sdr"
+        },
+        {
+          "n": 399,
+          "title": "STK-Session-Timeout verkürzen",
+          "kind": "sdr"
+        },
+        {
+          "n": 400,
+          "title": "STK-Sicherheits-Filter (Proxy)",
+          "kind": "info"
+        }
+      ]
+    },
+    {
+      "cat": 41,
+      "icon": "📶",
+      "name": "Advanced 5G Network Slicing & Edge",
+      "features": [
+        {
+          "n": 401,
+          "title": "S-NSSAI-Fuzzer",
+          "kind": "sdr"
+        },
+        {
+          "n": 402,
+          "title": "Edge-Computing-Latenzsimulation",
+          "kind": "info"
+        },
+        {
+          "n": 403,
+          "title": "URLLC-Status prüfen",
+          "kind": "cmd"
+        },
+        {
+          "n": 404,
+          "title": "Gefälschtes NSA-Ankersignal",
+          "kind": "sdr"
+        },
+        {
+          "n": 405,
+          "title": "5G-Core AMF-Verbindung loggen",
+          "kind": "sdr"
+        },
+        {
+          "n": 406,
+          "title": "PDU-Session-Injektor",
+          "kind": "sdr"
+        },
+        {
+          "n": 407,
+          "title": "Reflected-QoS-Test",
+          "kind": "cmd"
+        },
+        {
+          "n": 408,
+          "title": "Beammanagement-Fuzzer",
+          "kind": "sdr"
+        },
+        {
+          "n": 409,
+          "title": "URSP-Richtlinien auslesen",
+          "kind": "cmd"
+        },
+        {
+          "n": 410,
+          "title": "5G-Campusnetz-Simulation",
+          "kind": "sdr"
+        }
+      ]
+    },
+    {
+      "cat": 42,
+      "icon": "🛰️",
+      "name": "Satelliten-Schnittstellen (NTN) Fuzzing",
+      "features": [
+        {
+          "n": 411,
+          "title": "Gefälschte Satelliten-ID injizieren",
+          "kind": "sdr"
+        },
+        {
+          "n": 412,
+          "title": "Satelliten-Doppler-Fuzzer",
+          "kind": "sdr"
+        },
+        {
+          "n": 413,
+          "title": "Virtueller Orbit-Wechsel",
+          "kind": "sdr"
+        },
+        {
+          "n": 414,
+          "title": "NTN-Sniffer auf Bitebene",
+          "kind": "sdr"
+        },
+        {
+          "n": 415,
+          "title": "Gefälschte Abdeckungskarte",
+          "kind": "info"
+        },
+        {
+          "n": 416,
+          "title": "Satelliten-Sende-Timeout erzwingen",
+          "kind": "sdr"
+        },
+        {
+          "n": 417,
+          "title": "NTN-Protokoll-Header auslesen",
+          "kind": "fn"
+        },
+        {
+          "n": 418,
+          "title": "Weltraumwetter-Bitfehler simulieren",
+          "kind": "sdr"
+        },
+        {
+          "n": 419,
+          "title": "NTN-Zertifikats-Ablauf-Test",
+          "kind": "info"
+        },
+        {
+          "n": 420,
+          "title": "Satelliten-Kill-Switch",
+          "kind": "info"
+        }
+      ]
+    },
+    {
+      "cat": 43,
+      "icon": "🕵️",
+      "name": "Advanced Anti-Tracking & Baseband-Obfuskation",
+      "features": [
+        {
+          "n": 421,
+          "title": "Zufalls-IMEI pro Boot (Labor)",
+          "kind": "danger"
+        },
+        {
+          "n": 422,
+          "title": "TMSI-Echtzeit-Verschleierung",
+          "kind": "fn"
+        },
+        {
+          "n": 423,
+          "title": "Nachbarzellen-Reports unterdrücken",
+          "kind": "sdr"
+        },
+        {
+          "n": 424,
+          "title": "Hardware-Seriennummern blocken",
+          "kind": "info"
+        },
+        {
+          "n": 425,
+          "title": "Radio-Measurements unterdrücken",
+          "kind": "sdr"
+        },
+        {
+          "n": 426,
+          "title": "Gefälschtes Timing-Advance",
+          "kind": "sdr"
+        },
+        {
+          "n": 427,
+          "title": "Baseband-Prozess-Verschleierung",
+          "kind": "info"
+        },
+        {
+          "n": 428,
+          "title": "Google Location Accuracy kappen",
+          "kind": "cmd"
+        },
+        {
+          "n": 429,
+          "title": "Mobile DNS verschlüsseln (DoH/DoT)",
+          "kind": "ask"
+        },
+        {
+          "n": 430,
+          "title": "Radio-Ghost-Mode (100% passiv)",
+          "kind": "info"
+        }
+      ]
+    },
+    {
+      "cat": 44,
+      "icon": "⚡",
+      "name": "RF-Interferenz-Analyse & Hardware-Stress",
+      "features": [
+        {
+          "n": 431,
+          "title": "CQI-Fuzzing",
+          "kind": "sdr"
+        },
+        {
+          "n": 432,
+          "title": "BLER-Manipulator",
+          "kind": "sdr"
+        },
+        {
+          "n": 433,
+          "title": "Antennen-Phasen-Fuzzing",
+          "kind": "sdr"
+        },
+        {
+          "n": 434,
+          "title": "Modem-Thermodrossel-Bypass",
+          "kind": "danger"
+        },
+        {
+          "n": 435,
+          "title": "TX-Power-Saturationstest",
+          "kind": "danger"
+        },
+        {
+          "n": 436,
+          "title": "Signal-Rausch-Generator",
+          "kind": "sdr"
+        },
+        {
+          "n": 437,
+          "title": "Antennen-Schalt-Stresstest",
+          "kind": "sdr"
+        },
+        {
+          "n": 438,
+          "title": "Batterie-Drain-Profiler (Mobilfunk)",
+          "kind": "cmd"
+        },
+        {
+          "n": 439,
+          "title": "Uplink-Paket-Dropper",
+          "kind": "sdr"
+        },
+        {
+          "n": 440,
+          "title": "Modem-Spannungs-Monitor (PMIC)",
+          "kind": "sdr"
+        }
+      ]
+    },
+    {
+      "cat": 45,
+      "icon": "💾",
+      "name": "Forensische NVRAM-Rekonstruktion",
+      "features": [
+        {
+          "n": 441,
+          "title": "Luhn-Validierer für IMEI",
+          "kind": "info"
+        },
+        {
+          "n": 442,
+          "title": "MTK /mnt/vendor/nvram dumpen",
+          "kind": "rootcmd"
+        },
+        {
+          "n": 443,
+          "title": "RF-Band-Capability-Bitmask (Hex)",
+          "kind": "cmd"
+        },
+        {
+          "n": 444,
+          "title": "Field-Test-Mode (Geheimcode)",
+          "kind": "cmd"
+        },
+        {
+          "n": 445,
+          "title": "Modem-Firmware-Integrität (SHA256)",
+          "kind": "rootcmd"
+        },
+        {
+          "n": 446,
+          "title": "Historische APN-Logs",
+          "kind": "cmd"
+        },
+        {
+          "n": 447,
+          "title": "Gelöschte SMS-Zustellberichte",
+          "kind": "rootcmd"
+        },
+        {
+          "n": 448,
+          "title": "Baseband-Hardware-Revision",
+          "kind": "cmd"
+        },
+        {
+          "n": 449,
+          "title": "Provider-Name im RAM spoofen",
+          "kind": "rootcmd"
+        },
+        {
+          "n": 450,
+          "title": "Vollständiger NVRAM-Forensik-Snapshot",
+          "kind": "rootcmd"
+        }
+      ]
+    }
+  ]
+}

@@ -623,4 +623,4 @@ def create_keyword_recorder(adb: ADB) -> KeywordRecorder:
 def menu(adb=None) -> None:
     """KeywordRecorder Menu Wrapper."""
     obj = KeywordRecorder(adb) if adb else KeywordRecorder()
-    obj.show_recorder_menu()
+    obj.show_keyword_recorder_menu()

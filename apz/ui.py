@@ -8,19 +8,42 @@ from __future__ import annotations
 import os
 import shutil
 import sys
+import time as _time
 
 # --- Farb-Erkennung -------------------------------------------------------
 _NO_COLOR = bool(os.environ.get("NO_COLOR")) or not sys.stdout.isatty()
 
 # --- Auto-Modus (kein y/ENTER nötig) ------------------------------------
 _AUTO_MODE: bool = bool(os.environ.get("PANZER_AUTO"))
+_AUTO_UNTIL: float = 0.0   # Epoch-Zeit; 0 = kein zeitlimitierter Auto-Mode
+
 
 def set_auto(enabled: bool) -> None:
     global _AUTO_MODE
     _AUTO_MODE = enabled
 
+
+def set_auto_timer(seconds: int) -> None:
+    """Aktiviert Auto-Mode für `seconds` Sekunden, danach automatisch aus."""
+    global _AUTO_UNTIL, _AUTO_MODE
+    _AUTO_UNTIL = _time.time() + seconds
+    _AUTO_MODE = False   # zeitlimitiert – nicht permanent
+
+
+def auto_remaining() -> float:
+    """Sekunden bis Auto-Mode abläuft (0 wenn nicht aktiv oder abgelaufen)."""
+    if _AUTO_UNTIL == 0.0:
+        return 0.0
+    rem = _AUTO_UNTIL - _time.time()
+    return max(0.0, rem)
+
+
 def is_auto() -> bool:
-    return _AUTO_MODE
+    if _AUTO_MODE:
+        return True
+    if _AUTO_UNTIL > 0.0 and _time.time() < _AUTO_UNTIL:
+        return True
+    return False
 
 
 def _c(code: str) -> str:
@@ -147,6 +170,94 @@ def danger(msg: str) -> None:
     print(f"{BLINK}{BRED}{BOLD}☠ {msg}{RESET}")
 
 
+def alarm_pulse(findings: list[str], launch_forensics=None, adb=None) -> None:
+    """Pulsierender roter Terminal-Rahmen wenn verdächtige Prozesse gefunden werden.
+
+    findings: Liste der Befunde aus dem Spyware-Scan
+    launch_forensics: optionaler Callable(adb, process_line) für Forensik-Konsole
+    """
+    import time as _t
+
+    w = width()
+    bar_full  = "█" * (w - 1)
+    bar_thin  = "▄" * (w - 1)
+    bar_dots  = "▀▄" * ((w - 1) // 2)
+
+    # ANSI-Direktcodes für maximale Intensität (nicht über _c() damit immer aktiv)
+    R1 = "\033[38;2;255;0;0m"        # reines Rot
+    R2 = "\033[38;2;220;40;40m"
+    R3 = "\033[38;2;180;20;20m"
+    R4 = "\033[38;2;255;80;80m"      # helles Rot
+    BLD = "\033[1m"
+    BLK = "\033[5m"
+    RST = "\033[0m"
+
+    # 3 Pulse-Zyklen: Rahmen blinkt rot
+    for cycle in range(3):
+        sys.stdout.write(f"\033[2J\033[H")   # clear
+        shade = [R1, R2, R3, R2, R1][cycle % 5]
+
+        print(f"{shade}{BLD}{bar_full}{RST}")
+        print(f"{R4}{bar_thin}{RST}")
+        print()
+        print(f"  {R1}{BLD}{BLK}🚨🚨🚨  SPYWARE-ALARM · VERDÄCHTIGER PROZESS ERKANNT  🚨🚨🚨{RST}")
+        print()
+        for i, f in enumerate(findings[:5], 1):
+            print(f"  {R4}{BLD}⚑ [{i}] {f[:w-10]}{RST}")
+        print()
+        print(f"{R4}{bar_thin}{RST}")
+        print(f"{shade}{BLD}{bar_full}{RST}")
+        sys.stdout.flush()
+        _t.sleep(0.45)
+
+        # Dunkle Phase (off)
+        sys.stdout.write(f"\033[2J\033[H")
+        print(f"\033[38;2;80;0;0m{bar_full}{RST}")
+        print()
+        print(f"  \033[38;2;120;20;20m{BLD}🚨🚨🚨  SPYWARE-ALARM · VERDÄCHTIGER PROZESS ERKANNT  🚨🚨🚨{RST}")
+        print()
+        for i, f in enumerate(findings[:5], 1):
+            print(f"  \033[38;2;150;40;40m⚑ [{i}] {f[:w-10]}{RST}")
+        print()
+        print(f"\033[38;2;80;0;0m{bar_full}{RST}")
+        sys.stdout.flush()
+        _t.sleep(0.35)
+
+    # Finale Anzeige – statisch mit Optionen
+    sys.stdout.write(f"\033[2J\033[H")
+    print(f"{R1}{BLD}{bar_full}{RST}")
+    print(f"{R4}{BLD}{bar_dots}{RST}")
+    print()
+    print(f"  {R1}{BLD}🚨  SPYWARE-ALARM – {len(findings)} BEFUND(E){RST}")
+    print()
+    for i, f in enumerate(findings, 1):
+        print(f"  {R4}{BLD}⚑ [{i:>2}]{RST}  {f[:w-12]}")
+    print()
+    print(f"{R4}{BLD}{bar_dots}{RST}")
+    print(f"{R1}{BLD}{bar_full}{RST}")
+    print()
+
+    if launch_forensics and adb:
+        print(f"  {BLD}Optionen:{RST}")
+        print(f"  {R4}F{RST}  Forensik-Konsole öffnen (50 Tools)")
+        for i, f in enumerate(findings, 1):
+            print(f"  {R4}{i}{RST}  Forensik für Befund [{i}]")
+        print(f"  {GREY}0  Zurück{RST}")
+        print()
+        ch = ask("Auswahl", "0").strip().upper()
+        if ch == "F" or ch == "1":
+            idx = 0 if ch == "F" or ch == "1" else int(ch) - 1
+            proc_line = findings[idx] if idx < len(findings) else findings[0]
+            # Bereinige "Injection-Prozess: " Prefix
+            proc_line = proc_line.replace("Injection-Prozess: ", "")
+            launch_forensics(adb, proc_line)
+        elif ch.isdigit() and 1 <= int(ch) <= len(findings):
+            proc_line = findings[int(ch)-1].replace("Injection-Prozess: ", "")
+            launch_forensics(adb, proc_line)
+    else:
+        pause()
+
+
 def badge(kind: str) -> str:
     try:
         from . import lang as _lb
@@ -166,10 +277,20 @@ def badge(kind: str) -> str:
 
 
 # --- Eingabe --------------------------------------------------------------
+def _auto_tag() -> str:
+    """Zeigt AUTO + verbleibende Zeit wenn Timer aktiv."""
+    rem = auto_remaining()
+    if rem > 0:
+        mins = int(rem // 60)
+        secs = int(rem % 60)
+        return f"{GREY}[AUTO ⏱ {mins:02d}:{secs:02d}]{RESET}"
+    return f"{GREY}[AUTO]{RESET}"
+
+
 def ask(prompt: str, default: str = "") -> str:
-    if _AUTO_MODE:
+    if is_auto():
         sfx = f" {GREY}[{default}]{RESET}" if default else ""
-        print(f"{BOLD}{NEON}☠ ❯{RESET} {prompt}{sfx}:  {GREY}[AUTO]{RESET}")
+        print(f"{BOLD}{NEON}☠ ❯{RESET} {prompt}{sfx}:  {_auto_tag()}")
         return default
     sfx = f" {GREY}[{default}]{RESET}" if default else ""
     try:
@@ -180,9 +301,9 @@ def ask(prompt: str, default: str = "") -> str:
 
 
 def confirm(prompt: str, default: bool = False) -> bool:
-    if _AUTO_MODE:
+    if is_auto():
         label = "J" if default else "N"
-        print(f"{BOLD}{NEON}☠ ❯{RESET} {prompt}  {GREY}[AUTO → {label}]{RESET}")
+        print(f"{BOLD}{NEON}☠ ❯{RESET} {prompt}  {GREY}[AUTO → {label}]{RESET}  {_auto_tag()}")
         return default
     try:
         from . import lang as _lang
@@ -198,7 +319,7 @@ def confirm(prompt: str, default: bool = False) -> bool:
 
 
 def pause(msg: str = "") -> None:
-    if _AUTO_MODE:
+    if is_auto():
         return
     if not msg:
         try:

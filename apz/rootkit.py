@@ -105,6 +105,31 @@ def menu(adb: ADB, dev, st) -> None:
             ("22", "/system RW mounten (Modding)"),
             ("", f"{ui.BOLD}── E · LIVE-NETZWERK ──{ui.RESET}"),
             ("23", f"{ui.BGREEN}📡 DNS- & SNI-Watch (domain-genau, live){ui.RESET}"),
+            ("", f"{ui.BOLD}── F · MEMORY FORENSICS ──{ui.RESET}"),
+            ("24", "Live Process Memory Dump (/proc/PID/mem)"),
+            ("25", "SSL/TLS Keymaterial aus RAM extrahieren"),
+            ("26", "Android Keystore Material Dump"),
+            ("27", "Heap-Scan: Passwörter/Tokens/Keys im RAM"),
+            ("", f"{ui.BOLD}── G · FRIDA DEEP HOOKS ──{ui.RESET}"),
+            ("28", f"{ui.BGREEN}🪝 SSL Unpinning (Zertifikat-Pinning in jeder App umgehen){ui.RESET}"),
+            ("29", "Crypto-API Sniffer (Keys beim Entschlüsseln abfangen)"),
+            ("30", "Root-Detection Bypass (Apps die Root prüfen überlisten)"),
+            ("31", "Runtime Class Inspection (geladene Klassen + Methoden)"),
+            ("", f"{ui.BOLD}── H · BASEBAND & RADIO ──{ui.RESET}"),
+            ("32", "AT-Befehl-Interface direkt ans Modem"),
+            ("33", "IMSI-Catcher-Detektion (Cell-ID-Anomalien)"),
+            ("34", "Baseband Firmware Dump"),
+            ("35", "SIM-Klon-Vorbereitung (pySIM-Integration)"),
+            ("", f"{ui.BOLD}── I · KERNEL & TIEFSYSTEM ──{ui.RESET}"),
+            ("36", "Kernel-Module auflisten + verdächtige markieren"),
+            ("37", "/proc/kallsyms Analyse (Rootkit-Symbole)"),
+            ("38", "SELinux Policy Dump + Analyse"),
+            ("39", "Kernel-CVEs prüfen (Kernel-Version vs. CVE-DB)"),
+            ("", f"{ui.BOLD}── J · PERSISTENZ-MANAGEMENT ──{ui.RESET}"),
+            ("40", "Magisk-Module verwalten (auflisten / deaktivieren / löschen)"),
+            ("41", "init.d / init.rc Backdoors entfernen"),
+            ("42", "WLAN-ADB permanent einrichten (ADB over WiFi)"),
+            ("43", "Rooting-Spuren bereinigen (forensische Hygiene)"),
         ], back_label="Hauptmenü")
         if ch in ("back", "quit", ""):
             if ch == "":
@@ -120,6 +145,16 @@ def menu(adb: ADB, dev, st) -> None:
             "16": scan_ports, "17": scan_spyware, "18": scan_system_integrity,
             "19": image_partition, "20": backup_efs, "21": tar_data, "22": mount_system_rw,
             "23": network_watch,
+            "24": mem_process_dump, "25": mem_ssl_keys, "26": mem_keystore_dump,
+            "27": mem_heap_scan,
+            "28": frida_ssl_unpin, "29": frida_crypto_sniff, "30": frida_root_bypass,
+            "31": frida_class_inspect,
+            "32": baseband_at_shell, "33": baseband_imsi_catcher, "34": baseband_fw_dump,
+            "35": sim_clone_prep,
+            "36": kernel_modules, "37": kernel_kallsyms, "38": kernel_selinux_dump,
+            "39": kernel_cve_check,
+            "40": persist_magisk_mgr, "41": persist_init_clean, "42": persist_wifi_adb,
+            "43": persist_hygiene,
         }.get(ch)
         if fn:
             try:
@@ -539,9 +574,16 @@ def bd_scan_full(adb: ADB, dev, st) -> None:
         for x in findings:
             print(f"   {ui.BRED}⚑{ui.RESET} {x}")
         _save("backdoor_scan.txt", "\n".join(findings))
+        # Injection-Prozesse → Alarm + Forensik-Konsole anbieten
+        injection = [f for f in findings if "Injection-Prozess" in f or "Stalkerware" in f]
+        if injection:
+            from . import process_forensics
+            ui.alarm_pulse(injection, launch_forensics=process_forensics.launch, adb=adb)
+        else:
+            ui.pause()
     else:
         ui.ok("Keine offensichtlichen Backdoor-/Spyware-Indikatoren.")
-    ui.pause()
+        ui.pause()
 
 
 def scan_suid(adb: ADB, dev, st, _auto=False) -> list:
@@ -649,7 +691,8 @@ def scan_spyware(adb: ADB, dev, st, _auto=False) -> list:
                 findings.append(f"Notification-Listener (liest alle Benachrichtigungen): {s.strip()}")
                 print(f"   {ui.BYELLOW}Notif-Listener: {s.strip()}{ui.RESET}")
     # Frida/Injection-Prozesse
-    procs = _r(adb, "ps -A 2>/dev/null | grep -iE 'frida|gum-js|gadget|xposed|riru' ")
+    # WICHTIG: 'usb.gadget' (Samsung USB HAL) explizit ausschließen – kein Spyware
+    procs = _r(adb, "ps -A 2>/dev/null | grep -iE 'frida|gum-js|xposed|riru' | grep -v 'usb.gadget\\|usb_gadget\\|gadget-service'")
     if procs.strip():
         for l in procs.splitlines():
             findings.append(f"Injection-Prozess: {l.strip()}")
@@ -669,8 +712,13 @@ def scan_spyware(adb: ADB, dev, st, _auto=False) -> list:
             findings.append("Stalkerware-Verdacht: " + tag)
             print("   " + ui.pulse(f"⚑ {tag}"))
     if not _auto:
-        ui.ok(f"{len(findings)} Indikatoren.") if findings else ui.ok("Keine Spyware-Indikatoren.")
-        ui.pause()
+        if findings:
+            # Pulsierender roter Alarm + Forensik-Konsole anbieten
+            from . import process_forensics
+            ui.alarm_pulse(findings, launch_forensics=process_forensics.launch, adb=adb)
+        else:
+            ui.ok("Keine Spyware-Indikatoren.")
+            ui.pause()
     return findings
 
 
@@ -1035,3 +1083,950 @@ def _tcpdump_manual_hint() -> None:
               "• oder selbst bauen mit Android-NDK (libpcap + tcpdump, -static)",
               "• fertiges Binary nach /data/local/tmp/tcpdump legen (chmod 755) – wird dann genutzt"]:
         print(f"   {ui.GREY}{l}{ui.RESET}")
+
+
+# ══════════════════════════════��═══════════════════════════════════════════════
+#  F · MEMORY FORENSICS
+# ══════════════════════════════════════════════════════════════════════════════
+
+def mem_process_dump(adb: ADB, dev, st) -> None:
+    ui.clear(); ui.rule("F-24 · Live Process Memory Dump", ui.CYAN)
+    procs = _r(adb, "ps -A 2>/dev/null | sort -k1 -n | head -40")
+    print(procs)
+    pid = ui.ask("PID des Zielprozesses", "").strip()
+    if not pid.isdigit():
+        ui.warn("Ungültige PID"); ui.pause(); return
+
+    out_dir = _o()
+    dump_base = os.path.join(out_dir, f"memdump_pid{pid}_{int(time.time())}")
+    os.makedirs(dump_base, exist_ok=True)
+
+    ui.info(f"Lese Memory-Map von PID {pid} …")
+    maps = _r(adb, f"cat /proc/{pid}/maps 2>/dev/null")
+    if not maps.strip():
+        ui.err("Memory-Map nicht lesbar (Prozess weg oder keine Root-Rechte?)"); ui.pause(); return
+
+    maps_file = os.path.join(dump_base, "maps.txt")
+    with open(maps_file, "w") as f:
+        f.write(maps)
+    ui.ok(f"Memory-Map gespeichert: {maps_file}")
+
+    # rw-Regionen dumpen
+    dumped = 0
+    for line in maps.splitlines():
+        parts = line.split()
+        if len(parts) < 2 or "rw" not in parts[1]:
+            continue
+        addr = parts[0]
+        start_s, end_s = addr.split("-")
+        start_i, end_i = int(start_s, 16), int(end_s, 16)
+        size = end_i - start_i
+        if size > 64 * 1024 * 1024:   # >64 MB überspringen
+            continue
+        fname = parts[5].replace("/", "_").strip() if len(parts) > 5 else "anon"
+        out_file = f"/sdcard/.pz_mem_{start_s}.bin"
+        _r(adb, f"dd if=/proc/{pid}/mem bs=4096 skip={start_i//4096} count={size//4096} of={out_file} 2>/dev/null", timeout=30)
+        local = os.path.join(dump_base, f"{start_s}_{fname[:40]}.bin")
+        rc, _, _ = adb.raw(["pull", out_file, local], timeout=60)
+        _r(adb, f"rm -f {out_file}")
+        if rc == 0 and os.path.exists(local):
+            dumped += 1
+
+    ui.ok(f"{dumped} Speicherbereiche gedumpt → {dump_base}")
+    ui.info("Analyse: strings *.bin | grep -iE 'password|token|key|Bearer' | sort -u")
+    ui.pause()
+
+
+def mem_ssl_keys(adb: ADB, dev, st) -> None:
+    ui.clear(); ui.rule("F-25 · SSL/TLS Keymaterial aus RAM extrahieren", ui.CYAN)
+    ui.info("Suche nach TLS Master-Secrets und Session-Keys in laufenden Prozessen …")
+
+    # SSLKEYLOGFILE-Ansatz: prüfen ob Variable gesetzt
+    env_check = _r(adb, "printenv SSLKEYLOGFILE 2>/dev/null")
+    if env_check.strip():
+        ui.ok(f"SSLKEYLOGFILE ist gesetzt: {env_check.strip()}")
+        _r(adb, f"cat {env_check.strip()} 2>/dev/null")
+    else:
+        ui.info("SSLKEYLOGFILE nicht gesetzt.")
+
+    # Strings-Scan aller laufenden Prozesse nach TLS-Patterns
+    ui.info("Scanne /proc/*/mem nach CLIENT_RANDOM-Patterns (NSS/OpenSSL) …")
+    result = _r(adb,
+        "for pid in $(ls /proc | grep -E '^[0-9]+$'); do "
+        "  strings /proc/$pid/mem 2>/dev/null | grep -m1 'CLIENT_RANDOM' && echo \"PID=$pid\"; "
+        "done | head -20", timeout=30)
+    if result.strip():
+        ui.ok("TLS-Keymaterial gefunden:")
+        print(result)
+        _save("ssl_keys.txt", result)
+    else:
+        ui.warn("Kein CLIENT_RANDOM im RAM – Prozesse evtl. kompilierte TLS-Impl. ohne NSS/BoringSSL-Log")
+        ui.info("Tipp: Frida SSL-Unpin (G-28) liefert Klartexttraffic direkt.")
+    ui.pause()
+
+
+def mem_keystore_dump(adb: ADB, dev, st) -> None:
+    ui.clear(); ui.rule("F-26 · Android Keystore Material Dump", ui.CYAN)
+    ui.info("Suche nach Keystore-Dateien und Hardware-Backed-Keys …")
+
+    # Software-Keystore Dateien
+    for path in ["/data/misc/keystore", "/data/misc/keystore/user_0"]:
+        ls = _r(adb, f"ls -la {path} 2>/dev/null")
+        if ls.strip():
+            print(f"\n  {ui.CYAN}{path}:{ui.RESET}")
+            print(ls)
+
+    # Keymaster/Keymint TEE-Attestierung prüfen
+    ui.rule("TEE / Hardware-Backed Keys", ui.CYAN)
+    tee = _r(adb, "dumpsys package | grep -i 'keystoreservice\\|keymaster' | head -10")
+    if tee.strip():
+        print(tee)
+
+    # App-spezifische Keystores
+    ui.rule("App Keystores (.keystore / .jks / .p12 / .bks)", ui.CYAN)
+    found = _r(adb, "find /data/data -name '*.keystore' -o -name '*.jks' -o -name '*.p12' -o -name '*.bks' 2>/dev/null | head -20")
+    if found.strip():
+        for f in found.splitlines():
+            ui.ok(f"  {f}")
+    else:
+        ui.info("Keine App-Keystores gefunden")
+
+    ui.pause()
+
+
+def mem_heap_scan(adb: ADB, dev, st) -> None:
+    ui.clear(); ui.rule("F-27 · Heap-Scan: Credentials im RAM", ui.CYAN)
+    pkgs_raw = _r(adb, "pm list packages -3 | head -20")
+    pkgs = [l.split(":", 1)[1] for l in pkgs_raw.splitlines() if ":" in l]
+    print("  Apps:")
+    for i, p in enumerate(pkgs, 1):
+        print(f"  {ui.CYAN}{i:>2}{ui.RESET}  {p}")
+    pkg = ui.ask("Package-Name (oder leer für ALLE)", "").strip()
+    targets = [pkg] if pkg else pkgs
+
+    patterns = "password|passwd|token|secret|api.key|bearer|Authorization|access_token|refresh_token|JSESSIONID|sessionid|X-Auth"
+    ui.info(f"Scanne Heap von {len(targets)} App(s) …")
+    total = []
+    for p in targets[:10]:
+        pid = _r(adb, f"pidof {shq(p)} 2>/dev/null | awk '{{print $1}}'").strip()
+        if not pid or not pid.isdigit():
+            continue
+        hits = _r(adb,
+            f"strings /proc/{pid}/mem 2>/dev/null | grep -iE '{patterns}' | sort -u | head -30",
+            timeout=20)
+        if hits.strip():
+            ui.ok(f"{p} (PID {pid}):")
+            for h in hits.splitlines()[:15]:
+                print(f"    {ui.BRED}{h[:120]}{ui.RESET}")
+            total.extend(hits.splitlines())
+
+    if total:
+        _save("heap_credentials.txt", "\n".join(total))
+    else:
+        ui.info("Keine Credential-Patterns im Heap gefunden")
+    ui.pause()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  G · FRIDA DEEP HOOKS
+# ══════════════════════════════════════════════════════════════════════════════
+
+_FRIDA_SERVER_PATH = "/data/local/tmp/frida-server"
+
+def _ensure_frida_server(adb: ADB) -> bool:
+    """Stellt sicher dass frida-server auf dem Gerät läuft."""
+    # Bereits laufend?
+    running = _r(adb, f"pgrep -f frida-server 2>/dev/null")
+    if running.strip():
+        ui.ok(f"frida-server läuft (PID {running.strip()[:20]})")
+        return True
+
+    # Binary vorhanden?
+    if _r(adb, f"[ -x {_FRIDA_SERVER_PATH} ] && echo yes").strip() != "yes":
+        ui.warn(f"frida-server nicht gefunden: {_FRIDA_SERVER_PATH}")
+        ui.info("Lade passende Version für arm64 herunter …")
+        arch = _r(adb, "getprop ro.product.cpu.abi").strip()
+        arch_tag = "arm64" if "arm64" in arch else "arm"
+        import subprocess
+        try:
+            import frida as _frida_mod
+            ver = _frida_mod.__version__
+        except Exception:
+            ver = "17.0.0"
+        url = f"https://github.com/frida/frida/releases/download/{ver}/frida-server-{ver}-android-{arch_tag}.xz"
+        local_xz = os.path.join(_o(), f"frida-server-{ver}-{arch_tag}.xz")
+        local_bin = local_xz.replace(".xz", "")
+        ui.info(f"Download: {url}")
+        rc = subprocess.run(["curl", "-L", "-o", local_xz, url], timeout=120).returncode
+        if rc != 0 or not os.path.exists(local_xz):
+            ui.err("Download fehlgeschlagen"); return False
+        subprocess.run(["xz", "-d", local_xz], timeout=30)
+        if not os.path.exists(local_bin):
+            ui.err("Entpacken fehlgeschlagen"); return False
+        adb.raw(["push", local_bin, _FRIDA_SERVER_PATH], timeout=60)
+        _r(adb, f"chmod 755 {_FRIDA_SERVER_PATH}")
+        ui.ok("frida-server übertragen")
+
+    # Starten
+    ui.info("Starte frida-server …")
+    _r(adb, f"{_FRIDA_SERVER_PATH} &", timeout=3)
+    import time as _t; _t.sleep(1.5)
+    running = _r(adb, f"pgrep -f frida-server 2>/dev/null")
+    if running.strip():
+        ui.ok(f"frida-server gestartet (PID {running.strip()[:20]})")
+        return True
+    ui.err("frida-server konnte nicht gestartet werden"); return False
+
+
+def _frida_script(adb: ADB, app: str, script_js: str, label: str, timeout: int = 15) -> None:
+    """Führt ein Frida-Script gegen eine App aus und zeigt Output live."""
+    import subprocess, shutil, tempfile
+    frida_bin = shutil.which("frida")
+    if not frida_bin:
+        ui.err("frida CLI nicht gefunden (pip install frida-tools)"); ui.pause(); return
+
+    if not _ensure_frida_server(adb):
+        ui.pause(); return
+
+    tmp = tempfile.NamedTemporaryFile(suffix=".js", mode="w", delete=False)
+    tmp.write(script_js)
+    tmp.flush()
+
+    ui.rule(f"Frida · {label}", "\033[38;2;255;160;0m")
+    ui.info(f"Attache an {app} … (Strg+C zum Stoppen)")
+    try:
+        serial = adb.serial or ""
+        cmd = [frida_bin, "-U"]
+        if serial:
+            cmd += ["-D", serial]
+        cmd += ["-l", tmp.name, "-f", app, "--no-pause"]
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                text=True, bufsize=1)
+        import time as _t
+        start = _t.time()
+        for line in proc.stdout:
+            print(f"  {line}", end="")
+            if _t.time() - start > timeout:
+                break
+        proc.terminate()
+    except KeyboardInterrupt:
+        pass
+    except Exception as e:
+        ui.err(str(e))
+    finally:
+        os.unlink(tmp.name)
+    print()
+
+
+def frida_ssl_unpin(adb: ADB, dev, st) -> None:
+    ui.clear(); ui.rule("G-28 · SSL Unpinning", "\033[38;2;255;160;0m")
+    ui.info("Umgeht Zertifikat-Pinning in einer App (TrustManager/OkHttp/Conscrypt/Xamarin).")
+    apps_raw = _r(adb, "pm list packages -3 | head -30")
+    apps = [l.split(":", 1)[1] for l in apps_raw.splitlines() if ":" in l]
+    for i, a in enumerate(apps, 1):
+        print(f"  {ui.CYAN}{i:>2}{ui.RESET}  {a}")
+    app = ui.ask("Package-Name der Ziel-App", "").strip()
+    if not app:
+        return
+
+    # Universal SSL Unpin Script (TrustManager + OkHttp3 + Conscrypt)
+    script = r"""
+Java.perform(function() {
+  // TrustManager – acceptAll
+  var TrustManager = Java.registerClass({
+    name: 'com.panzer.TM', implements: [Java.use('javax.net.ssl.X509TrustManager')],
+    methods: {
+      checkClientTrusted: function(chain, authType) {},
+      checkServerTrusted: function(chain, authType) {},
+      getAcceptedIssuers: function() { return []; }
+    }
+  });
+  var SSLContext = Java.use('javax.net.ssl.SSLContext');
+  var ctx = SSLContext.getInstance('TLS');
+  ctx.init(null, [TrustManager.$new()], null);
+  SSLContext.getDefault.implementation = function() { return ctx; };
+  console.log('[+] TrustManager ungepin (TLS)');
+
+  // OkHttp3 CertificatePinner
+  try {
+    var CP = Java.use('okhttp3.CertificatePinner');
+    CP.check.overload('java.lang.String', 'java.util.List').implementation = function(h, c) {
+      console.log('[+] OkHttp3 Pin umgangen für: ' + h);
+    };
+  } catch(e) {}
+
+  // Conscrypt
+  try {
+    var Conscrypt = Java.use('com.android.org.conscrypt.TrustManagerImpl');
+    Conscrypt.checkTrustedRecursive.implementation = function() { return []; };
+    console.log('[+] Conscrypt TrustManager ungepin');
+  } catch(e) {}
+
+  console.log('[+] SSL Unpinning aktiv – Proxy-Traffic wird jetzt akzeptiert');
+});
+"""
+    _frida_script(adb, app, script, f"SSL Unpinning · {app}", timeout=60)
+    ui.pause()
+
+
+def frida_crypto_sniff(adb: ADB, dev, st) -> None:
+    ui.clear(); ui.rule("G-29 · Crypto-API Sniffer", "\033[38;2;255;160;0m")
+    apps_raw = _r(adb, "pm list packages -3 | head -30")
+    apps = [l.split(":", 1)[1] for l in apps_raw.splitlines() if ":" in l]
+    for i, a in enumerate(apps, 1):
+        print(f"  {ui.CYAN}{i:>2}{ui.RESET}  {a}")
+    app = ui.ask("Package-Name der Ziel-App", "").strip()
+    if not app:
+        return
+
+    script = r"""
+Java.perform(function() {
+  // javax.crypto.Cipher – Key und Plaintext abfangen
+  var Cipher = Java.use('javax.crypto.Cipher');
+  Cipher.doFinal.overload('[B').implementation = function(data) {
+    var result = this.doFinal(data);
+    console.log('[CIPHER] Input:  ' + bytesToHex(data).substring(0,80));
+    console.log('[CIPHER] Output: ' + bytesToHex(result).substring(0,80));
+    try {
+      console.log('[CIPHER] Input (str):  ' + Java.use('java.lang.String').$new(data));
+    } catch(e) {}
+    return result;
+  };
+
+  // SecretKeySpec – Key bei Erstellung
+  var SKS = Java.use('javax.crypto.spec.SecretKeySpec');
+  SKS.$init.overload('[B', 'java.lang.String').implementation = function(key, alg) {
+    console.log('[KEY] Algorithmus: ' + alg + '  Key (hex): ' + bytesToHex(key));
+    return this.$init(key, alg);
+  };
+
+  // MessageDigest – Hashing
+  var MD = Java.use('java.security.MessageDigest');
+  MD.digest.overload('[B').implementation = function(data) {
+    console.log('[DIGEST] Input: ' + Java.use('java.lang.String').$new(data).substring(0,80));
+    return this.digest(data);
+  };
+
+  function bytesToHex(bytes) {
+    var hex = '';
+    for (var i = 0; i < bytes.length; i++)
+      hex += ('0' + (bytes[i] & 0xff).toString(16)).slice(-2);
+    return hex;
+  }
+  console.log('[+] Crypto-Sniffer aktiv');
+});
+"""
+    _frida_script(adb, app, script, f"Crypto-Sniffer · {app}", timeout=30)
+    ui.pause()
+
+
+def frida_root_bypass(adb: ADB, dev, st) -> None:
+    ui.clear(); ui.rule("G-30 · Root-Detection Bypass", "\033[38;2;255;160;0m")
+    apps_raw = _r(adb, "pm list packages -3 | head -30")
+    apps = [l.split(":", 1)[1] for l in apps_raw.splitlines() if ":" in l]
+    for i, a in enumerate(apps, 1):
+        print(f"  {ui.CYAN}{i:>2}{ui.RESET}  {a}")
+    app = ui.ask("Package-Name der Ziel-App", "").strip()
+    if not app:
+        return
+
+    script = r"""
+Java.perform(function() {
+  // RootBeer / RootTools – isRooted()
+  ['com.scottyab.rootbeer.RootBeer', 'com.topjohnwu.magisk.RootBeer'].forEach(function(cls) {
+    try {
+      var C = Java.use(cls);
+      C.isRooted.implementation = function() { console.log('[+] RootBeer.isRooted() → false'); return false; };
+    } catch(e) {}
+  });
+
+  // Runtime.exec – 'which su' / 'su' blocken
+  var Runtime = Java.use('java.lang.Runtime');
+  Runtime.exec.overload('java.lang.String').implementation = function(cmd) {
+    if (cmd.indexOf('su') >= 0 || cmd.indexOf('which') >= 0) {
+      console.log('[ROOT-BYPASS] exec geblockt: ' + cmd);
+      cmd = 'ls /nonexistent';
+    }
+    return this.exec(cmd);
+  };
+
+  // File.exists() – su-Pfade verschleiern
+  var File = Java.use('java.io.File');
+  File.exists.implementation = function() {
+    var path = this.getAbsolutePath();
+    if (path.indexOf('/su') >= 0 || path.indexOf('supersu') >= 0 || path.indexOf('magisk') >= 0) {
+      console.log('[ROOT-BYPASS] File.exists() → false für: ' + path);
+      return false;
+    }
+    return this.exists();
+  };
+
+  // Build.TAGS – "test-keys" verstecken
+  var Build = Java.use('android.os.Build');
+  Object.defineProperty(Build, 'TAGS', { get: function() { return 'release-keys'; } });
+
+  console.log('[+] Root-Detection Bypass aktiv');
+});
+"""
+    _frida_script(adb, app, script, f"Root-Bypass · {app}", timeout=60)
+    ui.pause()
+
+
+def frida_class_inspect(adb: ADB, dev, st) -> None:
+    ui.clear(); ui.rule("G-31 · Runtime Class Inspection", "\033[38;2;255;160;0m")
+    apps_raw = _r(adb, "pm list packages -3 | head -30")
+    apps = [l.split(":", 1)[1] for l in apps_raw.splitlines() if ":" in l]
+    for i, a in enumerate(apps, 1):
+        print(f"  {ui.CYAN}{i:>2}{ui.RESET}  {a}")
+    app = ui.ask("Package-Name der Ziel-App", "").strip()
+    if not app:
+        return
+    filter_kw = ui.ask("Klassen-Filter (z.B. 'Auth', 'Crypto', leer=alle)", "").strip()
+
+    script = f"""
+Java.perform(function() {{
+  var filter = {repr(filter_kw.lower())};
+  var classes = Java.enumerateLoadedClassesSync();
+  var shown = 0;
+  classes.forEach(function(cls) {{
+    if (filter && cls.toLowerCase().indexOf(filter) < 0) return;
+    if (shown >= 200) return;
+    try {{
+      var C = Java.use(cls);
+      var methods = C.class.getDeclaredMethods();
+      if (methods.length > 0) {{
+        console.log('[CLASS] ' + cls + ' (' + methods.length + ' Methoden)');
+        shown++;
+      }}
+    }} catch(e) {{}}
+  }});
+  console.log('[+] ' + shown + ' Klassen gefunden');
+}});
+"""
+    _frida_script(adb, app, script, f"Class Inspect · {app}", timeout=20)
+    ui.pause()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  H · BASEBAND & RADIO
+# ══════════════════════════════════════════════════════════════════════════════
+
+def baseband_at_shell(adb: ADB, dev, st) -> None:
+    ui.clear(); ui.rule("H-32 · AT-Befehl-Interface (Modem)", ui.CYAN)
+    # Modem-Device finden
+    modem_devs = _r(adb, "ls /dev/ttyS* /dev/ttyACM* /dev/ttyUSB* /dev/ttyGS* 2>/dev/null")
+    # Samsung spezifisch
+    samsungdev = _r(adb, "ls /dev/umts_* /dev/sipc* /dev/esse* /dev/ipc* 2>/dev/null | head -5")
+    print(f"  {ui.CYAN}Serielle Interfaces:{ui.RESET}")
+    print(modem_devs or "  (keine gefunden)")
+    print(f"\n  {ui.CYAN}Samsung-Modem-Interfaces:{ui.RESET}")
+    print(samsungdev or "  (keine gefunden)")
+    print()
+
+    # Modem-Info via AT direkt
+    ui.rule("Modem-Info via dumpsys", ui.CYAN)
+    radio = _r(adb, "dumpsys telephony.registry 2>/dev/null | head -40")
+    print(radio[:2000])
+
+    ui.rule("Interaktive AT-Shell", ui.CYAN)
+    ui.info("Sende AT-Befehle direkt (z.B. AT+CGMI, AT+CGSN, AT+CREG?)")
+    ui.info("Modem-Interface: Samsung verwendet /dev/ttyS0 oder IPC-Stack")
+    print(f"\n  Bekannte AT-Befehle:")
+    cmds = [("AT+CGMI", "Hersteller"), ("AT+CGMM", "Modell"), ("AT+CGSN", "IMEI"),
+            ("AT+CREG?", "Netzregistrierung"), ("AT+COPS?", "Netzbetreiber"),
+            ("AT+CSQ", "Signalstärke"), ("AT+CIMI", "IMSI"), ("AT+CCID", "ICCID"),
+            ("AT+CLAC", "Alle unterstützten AT-Befehle")]
+    for at, desc in cmds:
+        print(f"  {ui.CYAN}{at:<20}{ui.RESET}  {desc}")
+    print()
+    dev_path = ui.ask("Modem-Pfad (z.B. /dev/ttyS0, leer=überspringen)", "").strip()
+    if dev_path:
+        at_cmd = ui.ask("AT-Befehl", "AT+CGSN").strip()
+        result = _r(adb, f"echo -e '{at_cmd}\\r' > {dev_path}; sleep 0.3; cat {dev_path}", timeout=5)
+        print(result or "(keine Antwort)")
+    ui.pause()
+
+
+def baseband_imsi_catcher(adb: ADB, dev, st) -> None:
+    ui.clear(); ui.rule("H-33 · IMSI-Catcher-Detektion", ui.CYAN)
+    ui.info("Analysiert Cell-ID-Wechsel, Signal-Anomalien und 2G-Downgrade …")
+
+    # Aktuelle Zelle
+    cell = _r(adb, "dumpsys telephony.registry 2>/dev/null | grep -E 'mCellIdentity|mSignal|mNetworkType|CellInfo' | head -30")
+    ui.rule("Aktuelle Zellinformationen", ui.CYAN)
+    print(cell or "  (nicht lesbar)")
+
+    # Netztyp prüfen – 2G-Downgrade (GSM/GPRS = Typ 1/2) ist IMSI-Catcher-Indikator
+    nettype = _r(adb, "dumpsys telephony.registry 2>/dev/null | grep -E 'mDataNetworkType|mVoiceNetworkType' | head -5")
+    ui.rule("Netztyp-Analyse", ui.CYAN)
+    print(nettype)
+    if any(x in nettype for x in ["GPRS", "GSM", "EDGE", "networkType=1", "networkType=2"]):
+        print(f"\n  {ui.BRED}⚠ 2G-Downgrade erkannt – IMSI-Catcher-Verdacht!{ui.RESET}")
+        print(f"  {ui.GREY}Echte LTE/5G-Netze zwingen nicht auf GSM/GPRS zurück.{ui.RESET}")
+    else:
+        ui.ok("Kein offensichtliches 2G-Downgrade")
+
+    # Multiple Cell-IDs prüfen (IMSI-Catcher wechselt oft schnell)
+    ui.rule("Cell-ID Snapshot (3 Messungen à 2s)", ui.CYAN)
+    import time as _t
+    cell_ids = []
+    for i in range(3):
+        cid = _r(adb, "dumpsys telephony.registry 2>/dev/null | grep -E 'mCellIdentity' | head -2")
+        print(f"  [{i+1}] {cid.strip()[:100]}")
+        cell_ids.append(cid.strip())
+        _t.sleep(2)
+
+    if len(set(cell_ids)) > 1:
+        print(f"\n  {ui.BYELLOW}⚠ Zell-ID hat sich geändert – möglicher Catcher oder normale Mobilität{ui.RESET}")
+    else:
+        ui.ok("Zell-ID stabil")
+    ui.pause()
+
+
+def baseband_fw_dump(adb: ADB, dev, st) -> None:
+    ui.clear(); ui.rule("H-34 · Baseband Firmware Dump", ui.CYAN)
+    ui.info("Liest Baseband-Version, Modem-Partitionen und Firmware-Infos aus …")
+
+    # Baseband-Version
+    bb = _r(adb, "getprop gsm.version.baseband 2>/dev/null")
+    ui.kv("Baseband-Version", bb or "—")
+
+    # Modem-Partition finden
+    modem_parts = _r(adb, "ls -la /dev/block/by-name/ 2>/dev/null | grep -iE 'modem|radio|nvm|cp|rild' | head -10")
+    ui.rule("Modem-Partitionen", ui.CYAN)
+    print(modem_parts or "  (keine gefunden)")
+
+    # Modem-Logs
+    rild = _r(adb, "logcat -d -s RIL:* AT:* | tail -50")
+    ui.rule("RILD-Logs (letzte 50 Zeilen)", ui.CYAN)
+    print(rild[:3000] if rild.strip() else "  (keine Logs)")
+
+    # Modem-Firmware sichern (falls Partition gefunden)
+    if modem_parts.strip():
+        if ui.confirm("Modem-Partition als Image sichern?", False):
+            first_dev = re.search(r'(/dev/block/\S+)', modem_parts)
+            if first_dev:
+                part = first_dev.group(1)
+                out = os.path.join(_o(), f"baseband_{int(time.time())}.img")
+                ui.info(f"Sichere {part} …")
+                _r(adb, f"dd if={part} of=/sdcard/modem_dump.img bs=4096 2>&1", timeout=120)
+                adb.raw(["pull", "/sdcard/modem_dump.img", out], timeout=300)
+                _r(adb, "rm -f /sdcard/modem_dump.img")
+                if os.path.exists(out):
+                    ui.ok(f"Gespeichert: {out} ({os.path.getsize(out)//1024//1024} MB)")
+    ui.pause()
+
+
+def sim_clone_prep(adb: ADB, dev, st) -> None:
+    ui.clear(); ui.rule("H-35 · SIM-Klon-Vorbereitung (pySIM)", ui.CYAN)
+    import shutil
+    if not shutil.which("pysim-shell"):
+        ui.err("pysim-shell nicht gefunden. Stelle sicher dass pySIM korrekt installiert ist.")
+        ui.info("Installiert unter: ~/.local/bin/pysim-shell")
+        ui.pause(); return
+
+    # SIM-Infos via ADB auslesen
+    ui.rule("SIM-Informationen (via ADB)", ui.CYAN)
+    sim_state = _r(adb, "getprop gsm.sim.state")
+    iccid = _r(adb, "service call iphonesubinfo 11 2>/dev/null | grep -o \"'[^']*'\" | tr -d \"' .\"")
+    imsi = _r(adb, "service call iphonesubinfo 7 2>/dev/null | grep -o \"'[^']*'\" | tr -d \"' .\"")
+    operator = _r(adb, "getprop gsm.operator.alpha")
+    ui.kv("SIM Status", sim_state)
+    ui.kv("ICCID", iccid or "(Root-Zugriff nötig)")
+    ui.kv("IMSI", imsi or "(Root-Zugriff nötig)")
+    ui.kv("Netzbetreiber", operator)
+
+    # Rohwerte via Root
+    ui.rule("SIM-Rohdaten (Root)", ui.CYAN)
+    iccid_raw = _r(adb, "cat /sys/class/sec/sec_sim/sim_iccid 2>/dev/null || "
+                        "cat /data/data/com.android.phone/sim.conf 2>/dev/null | head -5")
+    if iccid_raw.strip():
+        print(iccid_raw)
+
+    ui.rule("pySIM-Shell Anleitung", ui.CYAN)
+    print(f"""
+  pySIM liest SIM-Karten über PC/SC-Kartenleser (NICHT via ADB).
+  Benötigte Hardware: USB-Smartcard-Reader (z.B. ACR38U, SCM SCR335)
+
+  Schritt 1 – SIM in Kartenleser einlegen:
+  {ui.CYAN}pysim-shell --pcsc-device 0{ui.RESET}
+
+  Schritt 2 – Im pySIM-Shell:
+  {ui.CYAN}pySIM-shell (MF)> select MF
+  pySIM-shell (MF)> select EF.ICCID
+  pySIM-shell (MF/EF.ICCID)> read
+  pySIM-shell (MF)> select DF.GSM
+  pySIM-shell (MF/DF.GSM)> select EF.IMSI
+  pySIM-shell (MF/DF.GSM/EF.IMSI)> read{ui.RESET}
+
+  {ui.BYELLOW}⚠  SIM-Klonen ohne Einwilligung ist illegal.
+     Diese Funktion dient der forensischen Analyse eigener SIMs.{ui.RESET}
+""")
+    ui.pause()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  I · KERNEL & TIEFSYSTEM
+# ══════════════════════════════════════════════════════════════════════════════
+
+def kernel_modules(adb: ADB, dev, st) -> None:
+    ui.clear(); ui.rule("I-36 · Kernel-Module (lsmod)", ui.CYAN)
+    mods = _r(adb, "lsmod 2>/dev/null || cat /proc/modules 2>/dev/null")
+    if not mods.strip():
+        ui.warn("lsmod nicht verfügbar"); ui.pause(); return
+
+    # Bekannte legitime Module für Samsung Exynos
+    LEGIT = {"exynos", "samsung", "sec_", "s3c", "dwc", "wlan", "cfg80211",
+             "bluetooth", "snd_", "video", "camera", "nfc", "usb", "gadget"}
+    lines = mods.splitlines()
+    suspect = []
+    for line in lines:
+        name = line.split()[0].lower() if line.split() else ""
+        if name and not any(l in name for l in LEGIT):
+            suspect.append(line)
+
+    print(f"  {ui.BOLD}Alle {len(lines)} Module:{ui.RESET}")
+    for line in lines:
+        name = line.split()[0].lower() if line.split() else ""
+        color = ui.BRED if any(line == s for s in suspect) else ui.GREY
+        print(f"  {color}{line[:100]}{ui.RESET}")
+
+    if suspect:
+        print(f"\n  {ui.BYELLOW}⚠ {len(suspect)} unbekannte Module:{ui.RESET}")
+        for s in suspect:
+            print(f"  {ui.BRED}⚑ {s}{ui.RESET}")
+    else:
+        ui.ok("Alle Module bekannt/legitim")
+    ui.pause()
+
+
+def kernel_kallsyms(adb: ADB, dev, st) -> None:
+    ui.clear(); ui.rule("I-37 · /proc/kallsyms Analyse (Rootkit-Symbole)", ui.CYAN)
+    ui.info("Sucht nach verdächtigen Kernel-Symbolen …")
+
+    # Bekannte Rootkit-Symbole
+    ROOTKIT_SYMS = [
+        "diamorphine", "suterusu", "azazel", "kbd_notifier", "hide_process",
+        "set_addr_limit", "run_cmd", "sys_kill_hook", "packet_rcv_hook",
+        "udp_seq_show_hook", "inet_ioctl_hook", "proc_root_hook",
+    ]
+
+    # kallsyms lesbar?
+    test = _r(adb, "head -3 /proc/kallsyms 2>/dev/null")
+    if not test.strip():
+        ui.warn("/proc/kallsyms nicht lesbar (kbptr_restrict=2 oder kein Root)")
+        ui.info("Tipp: echo 0 > /proc/sys/kernel/kptr_restrict  (temporär)")
+        ui.pause(); return
+
+    count = _r(adb, "wc -l /proc/kallsyms 2>/dev/null")
+    print(f"  Symbole gesamt: {count.strip()}")
+
+    # Nach Rootkit-Symbolen suchen
+    found_any = False
+    for sym in ROOTKIT_SYMS:
+        hit = _r(adb, f"grep -i '{sym}' /proc/kallsyms 2>/dev/null | head -3")
+        if hit.strip():
+            print(f"  {ui.BRED}⚑ ROOTKIT-SYMBOL: {sym}{ui.RESET}")
+            print(f"    {hit.strip()[:120]}")
+            found_any = True
+
+    # Unbekannte Module in kallsyms
+    mods_in_kallsyms = _r(adb, "grep '\\[' /proc/kallsyms 2>/dev/null | awk '{print $NF}' | sort -u | head -30")
+    print(f"\n  {ui.CYAN}Geladene Kernel-Module (kallsyms):{ui.RESET}")
+    print(mods_in_kallsyms)
+
+    if not found_any:
+        ui.ok("Keine bekannten Rootkit-Symbole gefunden")
+    ui.pause()
+
+
+def kernel_selinux_dump(adb: ADB, dev, st) -> None:
+    ui.clear(); ui.rule("I-38 · SELinux Policy Dump + Analyse", ui.CYAN)
+
+    # Status
+    status = _r(adb, "getenforce 2>/dev/null")
+    state_color = ui.BGREEN if "Enforcing" in status else ui.BRED
+    ui.kv("SELinux-Status", f"{state_color}{status.strip()}{ui.RESET}")
+
+    # Policy-Datei lokalisieren
+    policy_paths = ["/sys/fs/selinux/policy", "/sepolicy", "/vendor/etc/selinux/precompiled_sepolicy"]
+    policy_file = None
+    for p in policy_paths:
+        if _r(adb, f"[ -f {p} ] && echo yes").strip() == "yes":
+            policy_file = p
+            size = _r(adb, f"wc -c {p} | awk '{{print $1}}'")
+            ui.ok(f"Policy gefunden: {p} ({size.strip()} Bytes)")
+            break
+
+    # Booleans
+    bools = _r(adb, "getsebool -a 2>/dev/null | head -30")
+    ui.rule("SELinux Booleans", ui.CYAN)
+    print(bools[:2000] if bools.strip() else "  (nicht verfügbar)")
+
+    # Aktuelle Context des ADB-Prozesses
+    ctx = _r(adb, "cat /proc/self/attr/current 2>/dev/null")
+    ui.kv("ADB-Context", ctx.strip() or "—")
+
+    # AVC-Denials (letzte 20)
+    ui.rule("AVC Denials (letzte 20)", ui.CYAN)
+    denials = _r(adb, "dmesg 2>/dev/null | grep 'avc:' | tail -20")
+    if denials.strip():
+        for d in denials.splitlines():
+            print(f"  {ui.BYELLOW}{d[:120]}{ui.RESET}")
+    else:
+        ui.ok("Keine AVC Denials in dmesg")
+
+    # Policy als Binary sichern
+    if policy_file and ui.confirm(f"Policy-Datei {policy_file} sichern?", False):
+        out = os.path.join(_o(), f"sepolicy_{int(time.time())}.bin")
+        adb.raw(["pull", policy_file, out], timeout=60)
+        if os.path.exists(out):
+            ui.ok(f"Policy gespeichert: {out}")
+            ui.info("Analyse: sesearch --allow --target <type> sepolicy.bin")
+    ui.pause()
+
+
+def kernel_cve_check(adb: ADB, dev, st) -> None:
+    ui.clear(); ui.rule("I-39 · Kernel-CVE-Check", ui.CYAN)
+    kernel_ver = _r(adb, "uname -r 2>/dev/null")
+    android_ver = _r(adb, "getprop ro.build.version.release 2>/dev/null")
+    patch_level = _r(adb, "getprop ro.build.version.security_patch 2>/dev/null")
+    ui.kv("Kernel-Version", kernel_ver.strip())
+    ui.kv("Android-Version", android_ver.strip())
+    ui.kv("Security-Patch", patch_level.strip())
+
+    # Kernel-Version parsen
+    kver_match = re.search(r'(\d+)\.(\d+)\.(\d+)', kernel_ver)
+    major, minor, patch = (int(kver_match.group(i)) for i in (1, 2, 3)) if kver_match else (0, 0, 0)
+
+    print()
+    ui.rule("CVE-Datenbank (Kernel + Android)", ui.CYAN)
+
+    # Bekannte kritische Kernel-CVEs nach Version
+    CVE_DB = [
+        ((4, 14, 0),  (4, 14, 200), "CVE-2021-22600", "KRITISCH", "Dirtypipe-ähnlich, Local Priv-Esc via Pipe"),
+        ((4, 14, 0),  (4, 14, 268), "CVE-2022-0847",  "KRITISCH", "DirtyPipe – Datei-Überschreibung ohne Root"),
+        ((4, 14, 0),  (4, 14, 250), "CVE-2021-4154",  "HOCH",     "cgroup1_parse_param UAF Priv-Esc"),
+        ((3, 18, 0),  (5,  0,  0),  "CVE-2019-2025",  "KRITISCH", "Binder UAF – Samsung-Geräte betroffen"),
+        ((4, 14, 0),  (4, 19, 100), "CVE-2020-0041",  "HOCH",     "Binder OOB Write"),
+        ((4,  0, 0),  (4, 14, 180), "CVE-2019-2215",  "KRITISCH", "Binder UAF (Stagefright-Nachfolger)"),
+    ]
+
+    affected = []
+    kver_flat = (major, minor, patch)
+    for vmin, vmax, cve, severity, desc in CVE_DB:
+        if vmin <= kver_flat <= vmax:
+            affected.append((cve, severity, desc))
+
+    if affected:
+        print(f"  {ui.BRED}⚑ {len(affected)} potenzielle CVEs für Kernel {kernel_ver.strip()}:{ui.RESET}")
+        for cve, sev, desc in affected:
+            sev_color = ui.BRED if sev == "KRITISCH" else ui.BYELLOW
+            print(f"\n  {sev_color}{sev}{ui.RESET}  {ui.BOLD}{cve}{ui.RESET}")
+            print(f"    {desc}")
+    else:
+        ui.ok(f"Keine bekannten CVEs für Kernel {kernel_ver.strip()} in lokaler DB")
+
+    # Security-Patch-Alter bewerten
+    if patch_level.strip():
+        try:
+            import datetime
+            patch_date = datetime.datetime.strptime(patch_level.strip(), "%Y-%m-%d")
+            age_days = (datetime.datetime.now() - patch_date).days
+            age_color = ui.BRED if age_days > 180 else (ui.BYELLOW if age_days > 90 else ui.BGREEN)
+            print(f"\n  Security-Patch-Alter: {age_color}{age_days} Tage{ui.RESET}")
+            if age_days > 180:
+                print(f"  {ui.BRED}⚠ Patch über 6 Monate alt – kritische CVEs möglicherweise offen{ui.RESET}")
+        except Exception:
+            pass
+    ui.pause()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  J · PERSISTENZ-MANAGEMENT
+# ══════════════════════════════════════════════════════════════════════════════
+
+def persist_magisk_mgr(adb: ADB, dev, st) -> None:
+    ui.clear(); ui.rule("J-40 · Magisk-Module verwalten", ui.CYAN)
+
+    # Module auflisten
+    modules_dir = "/data/adb/modules"
+    modules = _r(adb, f"ls {modules_dir} 2>/dev/null")
+    if not modules.strip():
+        ui.warn("Keine Magisk-Module gefunden (oder Magisk nicht installiert)")
+        ui.pause(); return
+
+    print(f"  {ui.BOLD}Installierte Module:{ui.RESET}")
+    mod_list = []
+    for mod in modules.splitlines():
+        if not mod.strip():
+            continue
+        mod_path = f"{modules_dir}/{mod}"
+        name = _r(adb, f"grep '^name=' {mod_path}/module.prop 2>/dev/null | cut -d= -f2")
+        ver  = _r(adb, f"grep '^version=' {mod_path}/module.prop 2>/dev/null | cut -d= -f2")
+        dis  = _r(adb, f"[ -f {mod_path}/disable ] && echo DEAKTIVIERT || echo aktiv")
+        color = ui.GREY if "DEAKTIVIERT" in dis else ui.BGREEN
+        print(f"  {color}{len(mod_list)+1:>2}  {mod:<30} {name.strip()[:25]} {ver.strip()[:10]}  [{dis.strip()}]{ui.RESET}")
+        mod_list.append(mod)
+
+    print()
+    print(f"  {ui.BOLD}Optionen:{ui.RESET}")
+    print(f"  {ui.CYAN}d <Nr>{ui.RESET}  Deaktivieren (disable-Flag setzen)")
+    print(f"  {ui.CYAN}e <Nr>{ui.RESET}  Aktivieren")
+    print(f"  {ui.CYAN}x <Nr>{ui.RESET}  Löschen (permanent)")
+    print(f"  {ui.GREY}0      Zurück{ui.RESET}")
+    print()
+    ch = ui.ask("Befehl", "0").strip().lower()
+    if ch == "0" or not ch:
+        return
+
+    parts = ch.split()
+    if len(parts) == 2 and parts[1].isdigit():
+        cmd, idx = parts[0], int(parts[1]) - 1
+        if 0 <= idx < len(mod_list):
+            mod = mod_list[idx]
+            mod_path = f"{modules_dir}/{mod}"
+            if cmd == "d":
+                _r(adb, f"touch {mod_path}/disable")
+                ui.ok(f"{mod} deaktiviert (wirksam nach Neustart)")
+            elif cmd == "e":
+                _r(adb, f"rm -f {mod_path}/disable")
+                ui.ok(f"{mod} aktiviert (wirksam nach Neustart)")
+            elif cmd == "x":
+                if ui.confirm(f"Modul '{mod}' wirklich LÖSCHEN?", False):
+                    _r(adb, f"rm -rf {mod_path}")
+                    ui.ok(f"{mod} gelöscht")
+    ui.pause()
+
+
+def persist_init_clean(adb: ADB, dev, st) -> None:
+    ui.clear(); ui.rule("J-41 · init.d / init.rc Backdoor-Bereinigung", ui.CYAN)
+    ui.info("Sucht und entfernt verdächtige Einträge in Startup-Dateien …")
+
+    # init.d Scripts
+    ui.rule("init.d Scripts", ui.CYAN)
+    init_d = _r(adb, "ls -la /system/etc/init.d/ 2>/dev/null")
+    print(init_d or "  (leer oder nicht vorhanden)")
+
+    # init.rc Dateien scannen
+    ui.rule("init.rc (verdächtige exec/service-Einträge)", ui.CYAN)
+    suspect_init = _r(adb,
+        "grep -rE 'exec.*(/tmp|/sdcard|/data/local)|service.*(/tmp|/sdcard)|reverse.*shell|nc.*-e|bash.*-i' "
+        "/init.rc /vendor/etc/init/ /system/etc/init/ 2>/dev/null "
+        "| grep -vE 'simpleperf|logcat|bootstat|heapprofd|mtectrl|flags_health|gsid|aconfigd|recovery-persist|cppreopts|preloads_copy|sim_config|network_config|macloader|netbpfload' "
+        "| head -20")
+    if suspect_init.strip():
+        print(f"  {ui.BRED}⚑ Verdächtige init.rc-Einträge:{ui.RESET}")
+        print(suspect_init)
+        if ui.confirm("Verdächtige Einträge in Quarantäne verschieben?", False):
+            _r(adb, "mkdir -p /data/local/tmp/panzer_quarantine")
+            for line in suspect_init.splitlines():
+                fpath = line.split(":")[0] if ":" in line else ""
+                if fpath and fpath.startswith("/"):
+                    _r(adb, f"cp {fpath} /data/local/tmp/panzer_quarantine/")
+                    _r(adb, f"echo '' > {fpath}")
+                    ui.ok(f"Bereinigt: {fpath}")
+    else:
+        ui.ok("Keine verdächtigen init.rc-Einträge gefunden")
+
+    # Magisk init-Hooks
+    ui.rule("Magisk init-Hooks", ui.CYAN)
+    magisk_init = _r(adb, "ls /data/adb/post-fs-data.d/ /data/adb/service.d/ 2>/dev/null")
+    print(magisk_init or "  (keine post-fs/service.d Scripts)")
+    if magisk_init.strip():
+        for script in magisk_init.splitlines():
+            content = _r(adb, f"cat /data/adb/post-fs-data.d/{script} 2>/dev/null || cat /data/adb/service.d/{script} 2>/dev/null")
+            if content.strip():
+                print(f"\n  {ui.CYAN}Script: {script}{ui.RESET}")
+                print(content[:500])
+    ui.pause()
+
+
+def persist_wifi_adb(adb: ADB, dev, st) -> None:
+    ui.clear(); ui.rule("J-42 · WLAN-ADB permanent einrichten", ui.CYAN)
+    ui.info("Konfiguriert ADB über WiFi dauerhaft (überlegt Neustart).")
+
+    # Aktuelle IP
+    ip = _r(adb, "ip -4 addr show wlan0 2>/dev/null | grep 'inet ' | awk '{print $2}' | cut -d/ -f1")
+    if not ip.strip():
+        ip = _r(adb, "ifconfig wlan0 2>/dev/null | grep 'inet addr' | awk '{print $2}' | cut -d: -f2")
+    ui.kv("Aktuelle WLAN-IP", ip.strip() or "—")
+
+    port = ui.ask("ADB-Port", "5555").strip()
+    if not port.isdigit():
+        port = "5555"
+
+    # tcpip aktivieren
+    _r(adb, f"setprop service.adb.tcp.port {port}")
+    _r(adb, "stop adbd; start adbd")
+    import time as _t; _t.sleep(1.5)
+
+    # Permanent machen via Magisk (oder init.d)
+    magisk_ok = _r(adb, "[ -d /data/adb/service.d ] && echo yes").strip() == "yes"
+    if magisk_ok:
+        script = f"#!/system/bin/sh\nsetprop service.adb.tcp.port {port}\nstop adbd\nstart adbd\n"
+        _r(adb, f"echo '{script}' > /data/adb/service.d/adb_wifi.sh; chmod 755 /data/adb/service.d/adb_wifi.sh")
+        ui.ok(f"Magisk service.d Script erstellt → ADB-WiFi bleibt nach Neustart aktiv")
+    else:
+        # init.d Fallback
+        script = f"#!/system/bin/sh\nsetprop service.adb.tcp.port {port}\n"
+        _r(adb, f"mount -o rw,remount /system 2>/dev/null; "
+                f"echo '{script}' > /system/etc/init.d/99adb_wifi; "
+                f"chmod 755 /system/etc/init.d/99adb_wifi")
+        ui.ok("init.d Script erstellt")
+
+    print()
+    if ip.strip():
+        ui.ok(f"ADB-WiFi aktiv: adb connect {ip.strip()}:{port}")
+        print(f"\n  {ui.BGREEN}Verbinden mit:{ui.RESET}  {ui.BOLD}adb connect {ip.strip()}:{port}{ui.RESET}")
+    else:
+        ui.warn("IP nicht ermittelbar – stelle WLAN sicher")
+    ui.pause()
+
+
+def persist_hygiene(adb: ADB, dev, st) -> None:
+    ui.clear(); ui.rule("J-43 · Rooting-Spuren bereinigen", ui.CYAN)
+    ui.warn("Entfernt Spuren forensischer Aktivität – NUR auf eigenen Geräten verwenden!")
+    print()
+    if not ui.confirm("Fortfahren mit Spurenbereinigung?", False):
+        return
+
+    tasks = [
+        ("Logcat-Buffer leeren",
+         "logcat -c 2>/dev/null"),
+        ("Dmesg-Buffer leeren",
+         "dmesg -c 2>/dev/null || echo 3 > /proc/sys/kernel/printk 2>/dev/null"),
+        ("/data/local/tmp bereinigen (AndroidPanzer-Temp)",
+         "rm -f /data/local/tmp/.pz_* /data/local/tmp/panzer_* 2>/dev/null"),
+        ("ADB-Authentifizierungs-Keys (aktuell laufende Session bleibt)",
+         "ls /data/misc/adb/adb_keys 2>/dev/null"),
+        ("Shell-History leeren",
+         "rm -f /data/local/tmp/.ash_history ~/.ash_history 2>/dev/null; history -c 2>/dev/null"),
+        ("Panzer-Temp-Dumps auf /sdcard entfernen",
+         "rm -f /sdcard/.pz_* /sdcard/memdump_* /sdcard/modem_dump.img 2>/dev/null"),
+        ("Panzer-Service-Logs rotieren",
+         "rm -f /data/local/tmp/panzer_*.log 2>/dev/null"),
+        ("frida-server stoppen",
+         "pkill frida-server 2>/dev/null"),
+    ]
+
+    for desc, cmd in tasks:
+        result = _r(adb, cmd)
+        ui.ok(f"{desc}")
+
+    # Ausgabe-Verzeichnis anzeigen
+    out_dir = _o()
+    if os.path.exists(out_dir):
+        total = sum(os.path.getsize(os.path.join(d, f))
+                    for d, _, files in os.walk(out_dir) for f in files)
+        print()
+        ui.info(f"Extrahierte Daten auf dem HOST: {out_dir} ({total//1024//1024} MB)")
+        if ui.confirm("Auch HOST-Ausgabeverzeichnis leeren?", False):
+            import shutil as _sh
+            _sh.rmtree(out_dir, ignore_errors=True)
+            os.makedirs(out_dir, exist_ok=True)
+            ui.ok("Host-Ausgabeverzeichnis geleert")
+
+    print()
+    ui.ok("Spurenbereinigung abgeschlossen")
+    ui.pause()

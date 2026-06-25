@@ -354,7 +354,7 @@ def show_theme(adb=None) -> None:
         ui.rule(color=ui.CYAN)
         print(f"  {ui.GREY}  0  Zurück    q  Beenden{ui.RESET}")
         print()
-        raw = input(f"  {ui.BOLD}☠ ❯ Theme (1-{len(_THEMES)}, 0): {ui.RESET}").strip().lower()
+        raw = ui.ask(f"Theme (1-{len(_THEMES)}, 0)", "0").strip().lower()
         if raw in ("0", "back", "q", "quit"):
             return
         try:

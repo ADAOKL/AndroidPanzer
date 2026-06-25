@@ -51,7 +51,7 @@ def require_authorization() -> bool:
         choice = "1"
         print(f"  Ihr Szenario [0-4]:  {ui.GREY}[AUTO → 1 Eigenes Gerät]{ui.RESET}")
     else:
-        choice = input("  Ihr Szenario [0-4]: ").strip()
+        choice = ui.ask("Ihr Szenario [0-4]", "0").strip()
     if choice not in ("1", "2", "3", "4"):
         print(f"\n  {ui.RED}Abgebrochen – kein Zugriff gewährt.{ui.RESET}\n")
         return False
